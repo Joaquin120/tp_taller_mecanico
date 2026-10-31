@@ -129,7 +129,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ## FASE 1 — Infraestructura Core, Contratos y Seguridad
 
 ### [C-03] `core-uow-repository-contracts`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Repositorios base genéricos, Unit of Work abstracto y envoltorio de paginación
   - `app/core/repository.py`: `BaseRepository[T]` genérico (`get_by_id`, `get_all`, `count`, `add`, `update`, `delete`) con `session.flush()` y prohibición absoluta de `commit()`; `SoftDeleteRepository[T]` que filtra borrados lógicos y añade `soft_delete()`
   - `app/core/unit_of_work.py`: `UnitOfWork` base como gestor de contexto asincrónico (`async with uow:`), confirma en salida limpia, revierte ante excepción y no cierra la sesión
