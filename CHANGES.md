@@ -129,7 +129,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ## FASE 1 — Infraestructura Core, Contratos y Seguridad
 
 ### [C-03] `core-uow-repository-contracts`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Repositorios base genéricos, Unit of Work abstracto y envoltorio de paginación
   - `app/core/repository.py`: `BaseRepository[T]` genérico (`get_by_id`, `get_all`, `count`, `add`, `update`, `delete`) con `session.flush()` y prohibición absoluta de `commit()`; `SoftDeleteRepository[T]` que filtra borrados lógicos y añade `soft_delete()`
   - `app/core/unit_of_work.py`: `UnitOfWork` base como gestor de contexto asincrónico (`async with uow:`), confirma en salida limpia, revierte ante excepción y no cierra la sesión
@@ -146,7 +146,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ---
 
 ### [C-04] `auth-security-session`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Autenticación segura, bcrypt off-loop con semáforo, cookie HttpOnly y rate limit con timing defense
   - `app/core/security.py`: `hash_password` y `verify_password` ejecutados con `asyncio.to_thread` acotados por `asyncio.Semaphore(MAX_CONCURRENT_BCRYPT)`, límite estricto de 72 bytes en entrada
   - `POST /auth/login`: verificación previa de 5 intentos fallidos en 60s por (email, ip) sobre `intento_acceso` (responde 429 con `Retry-After`); si pasa, verifica contra hash real o hash ficticio precalculado (RN-09); registro de intento en sesión y transacción independiente confirmada
