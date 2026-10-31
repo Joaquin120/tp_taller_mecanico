@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.database import crear_fabrica_sesiones, crear_motor
 from app.modules.health.router import router as health_router
+from app.modules.usuarios.router import router as auth_router
 
 
 @asynccontextmanager
@@ -35,3 +36,4 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(auth_router, prefix="/auth")

@@ -146,7 +146,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ---
 
 ### [C-04] `auth-security-session`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado
 - **Scope**: Autenticación segura, bcrypt off-loop con semáforo, cookie HttpOnly y rate limit con timing defense
   - `app/core/security.py`: `hash_password` y `verify_password` ejecutados con `asyncio.to_thread` acotados por `asyncio.Semaphore(MAX_CONCURRENT_BCRYPT)`, límite estricto de 72 bytes en entrada
   - `POST /auth/login`: verificación previa de 5 intentos fallidos en 60s por (email, ip) sobre `intento_acceso` (responde 429 con `Retry-After`); si pasa, verifica contra hash real o hash ficticio precalculado (RN-09); registro de intento en sesión y transacción independiente confirmada

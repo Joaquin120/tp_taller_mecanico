@@ -1,0 +1,97 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Any
+import bcrypt
+import jwt
+
+from app.core.config import get_settings
+
+_bcrypt_semaphore: asyncio.Semaphore | None = None
+
+
+def get_bcrypt_semaphore() -> asyncio.Semaphore:
+    """Retorna el semáforo concurrente para limitar operaciones de bcrypt en CPU."""
+    global _bcrypt_semaphore
+    if _bcrypt_semaphore is None:
+        settings = get_settings()
+        _bcrypt_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BCRYPT)
+    return _bcrypt_semaphore
+
+
+async def hash_password(plain: str) -> str:
+    """Hashea una contraseña con bcrypt fuera del event loop bajo un semáforo.
+
+    Regla dura (DD-03):
+    - Trunca la entrada estrictamente a 72 bytes.
+    - Se ejecuta en asyncio.to_thread acotado por MAX_CONCURRENT_BCRYPT.
+    """
+    settings = get_settings()
+    semaphore = get_bcrypt_semaphore()
+    plain_bytes = plain.encode("utf-8")[:72]
+
+    def _hash() -> str:
+        salt = bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+        return bcrypt.hashpw(plain_bytes, salt).decode("utf-8")
+
+    async with semaphore:
+        return await asyncio.to_thread(_hash)
+
+
+async def verify_password(plain: str, hashed: str) -> bool:
+    """Verifica una contraseña contra un hash con bcrypt fuera del event loop.
+
+    Regla dura (DD-03):
+    - Trunca la entrada estrictamente a 72 bytes.
+    - Se ejecuta en asyncio.to_thread acotado por MAX_CONCURRENT_BCRYPT.
+    """
+    semaphore = get_bcrypt_semaphore()
+    plain_bytes = plain.encode("utf-8")[:72]
+    hashed_bytes = hashed.encode("utf-8")
+
+    def _verify() -> bool:
+        try:
+            return bcrypt.checkpw(plain_bytes, hashed_bytes)
+        except Exception:
+            return False
+
+    async with semaphore:
+        return await asyncio.to_thread(_verify)
+
+
+def crear_access_token(
+    data: dict[str, Any],
+    expires_delta: timedelta | None = None,
+) -> str:
+    """Genera un token JWT firmado según la configuración del sistema.
+
+    Incluye sub, iat (con precisión) y exp.
+    """
+    settings = get_settings()
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+    if expires_delta is not None:
+        expire = now + expires_delta
+    else:
+        expire = now + timedelta(seconds=settings.JWT_EXPIRATION_SECONDS)
+
+    to_encode.update(
+        {
+            "iat": now.timestamp(),
+            "exp": expire.timestamp(),
+        }
+    )
+    return jwt.encode(
+        to_encode,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def decodificar_access_token(token: str) -> dict[str, Any]:
+    """Decodifica y valida la firma y expiración de un token JWT."""
+    settings = get_settings()
+    return jwt.decode(
+        token,
+        settings.JWT_SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+    )
