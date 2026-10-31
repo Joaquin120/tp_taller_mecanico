@@ -108,7 +108,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ---
 
 ### [C-02] `domain-models-migrations-seed`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Modelos de datos del dominio, relaciones, índices únicos parciales, plantilla Alembic asincrónica y datos iniciales
   - Modelos SQLModel/SQLAlchemy para las 13 tablas: `usuario`, `asignacion_rol`, `intento_acceso`, `evento_seguridad`, `cliente`, `vehiculo`, `repuesto`, `estado_orden`, `orden_trabajo`, `item_orden`, `historial_estado_orden`, `movimiento_stock`, `historial_precio_repuesto`
   - Índices únicos parciales en BD (`postgresql_where`): patente no borrada, código de repuesto no borrado, rol activo no revocado
