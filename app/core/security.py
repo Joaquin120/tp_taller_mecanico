@@ -61,14 +61,19 @@ async def verify_password(plain: str, hashed: str) -> bool:
 def crear_access_token(
     data: dict[str, Any],
     expires_delta: timedelta | None = None,
+    emitido_en: datetime | None = None,
 ) -> str:
     """Genera un token JWT firmado según la configuración del sistema.
 
-    Incluye sub, iat (con precisión) y exp.
+    Incluye sub, iat (con precisión) y exp. ``emitido_en`` permite fijar la
+    base de emisión para que el token del cambio de contraseña use exactamente
+    el mismo timestamp que ``password_cambiada_en`` (RN-07).
     """
     settings = get_settings()
     to_encode = data.copy()
-    now = datetime.now(timezone.utc)
+    now = emitido_en or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     if expires_delta is not None:
         expire = now + expires_delta
     else:

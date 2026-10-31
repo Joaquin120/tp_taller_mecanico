@@ -11,7 +11,7 @@ import pytest
 from app.core.security import hash_password
 from app.modules.clientes.models import Cliente
 from app.modules.usuarios.models import IntentoAcceso, Usuario
-from app.modules.usuarios.schemas import RegistroClienteRequest
+from app.modules.usuarios.schemas import CambiarPasswordRequest, RegistroClienteRequest
 from app.modules.usuarios.service import AuthService
 from app.modules.usuarios.unit_of_work import UsuariosUnitOfWork
 
@@ -345,3 +345,104 @@ async def test_intento_acceso_repositorio_login_exitoso_reinicia_conteo():
 
     conteo = await repo.contar_fallos_recientes("user@test.com", "1.1.1.1", ventana_segundos=60)
     assert conteo == 0
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_servicio_exitoso():
+    session = AsyncMock()
+    uow = UsuariosUnitOfWork(session)
+
+    pwd_hash_actual = await hash_password("ClaveVieja123")
+    usuario_db = Usuario(
+        id=15,
+        email="cambio@test.com",
+        nombre="Usuario",
+        password_hash=pwd_hash_actual,
+        activo=True,
+        debe_cambiar_password=True,
+    )
+
+    session_lectura = AsyncMock()
+    res_mock = MagicMock()
+    res_mock.scalar_one_or_none.return_value = usuario_db
+    session_lectura.execute.return_value = res_mock
+
+    class FakeFactory:
+        def __call__(self):
+            ctx = AsyncMock()
+            ctx.__aenter__.return_value = session_lectura
+            ctx.__aexit__.return_value = None
+            return ctx
+
+    uow.usuarios.get_by_id = AsyncMock(return_value=usuario_db)
+    uow.usuarios.update = AsyncMock(return_value=usuario_db)
+    uow.eventos.add = AsyncMock()
+
+    dto = CambiarPasswordRequest(
+        password_actual="ClaveVieja123",
+        password_nueva="NuevaClaveSegura123",
+    )
+
+    usr_actualizado, nuevo_token = await AuthService.cambiar_password(
+        usuario_id=15,
+        dto=dto,
+        roles=["MECANICO"],
+        session_factory=FakeFactory(),
+        uow=uow,
+    )
+
+    assert usr_actualizado.debe_cambiar_password is False
+    assert usr_actualizado.password_cambiada_en is not None
+    assert nuevo_token is not None
+    uow.usuarios.update.assert_awaited_once()
+    uow.eventos.add.assert_awaited_once()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_servicio_clave_incorrecta_lanza_401():
+    session = AsyncMock()
+    uow = UsuariosUnitOfWork(session)
+
+    pwd_hash_actual = await hash_password("ClaveReal123")
+    usuario_db = Usuario(
+        id=15,
+        email="cambio@test.com",
+        nombre="Usuario",
+        password_hash=pwd_hash_actual,
+        activo=True,
+    )
+
+    session_lectura = AsyncMock()
+    res_mock = MagicMock()
+    res_mock.scalar_one_or_none.return_value = usuario_db
+    session_lectura.execute.return_value = res_mock
+
+    class FakeFactory:
+        def __call__(self):
+            ctx = AsyncMock()
+            ctx.__aenter__.return_value = session_lectura
+            ctx.__aexit__.return_value = None
+            return ctx
+
+    uow.usuarios.update = AsyncMock()
+    uow.eventos.add = AsyncMock()
+
+    dto = CambiarPasswordRequest(
+        password_actual="ClaveIncorrecta",
+        password_nueva="NuevaClaveSegura123",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await AuthService.cambiar_password(
+            usuario_id=15,
+            dto=dto,
+            roles=["CLIENTE"],
+            session_factory=FakeFactory(),
+            uow=uow,
+        )
+
+    assert exc_info.value.status_code == 401
+    assert "incorrecta" in exc_info.value.detail.lower()
+    assert not uow.usuarios.update.called
+    assert not uow.eventos.add.called

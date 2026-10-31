@@ -74,7 +74,26 @@ async def get_current_user(
             detail="Usuario no encontrado o inactivo",
         )
 
-    # 2. Consultar roles vigentes en BD (RN-04)
+    # 2. Invalidar sesiones anteriores al último cambio de contraseña (RN-07)
+    if user.password_cambiada_en is not None:
+        iat = payload.get("iat")
+        if not isinstance(iat, (int, float)) or isinstance(iat, bool):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido: sin fecha de emisión",
+            )
+
+        referencia = user.password_cambiada_en
+        if referencia.tzinfo is None:
+            referencia = referencia.replace(tzinfo=timezone.utc)
+
+        if float(iat) < referencia.timestamp():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sesión invalidada por cambio de contraseña",
+            )
+
+    # 3. Consultar roles vigentes en BD (RN-04)
     ahora = datetime.now(timezone.utc)
     stmt_roles = select(AsignacionRol.rol).where(
         AsignacionRol.usuario_id == user.id,
@@ -87,7 +106,7 @@ async def get_current_user(
     res_roles = await session.execute(stmt_roles)
     roles_vigentes = list(res_roles.scalars().all())
 
-    # 3. Buscar cliente_id si existe
+    # 4. Buscar cliente_id si existe
     stmt_cliente = select(Cliente.id).where(Cliente.usuario_id == user.id)
     res_cliente = await session.execute(stmt_cliente)
     cliente_id = res_cliente.scalar_one_or_none()
@@ -120,6 +139,19 @@ def require_roles(*roles_permitidos: str):
         return usuario
 
     return _role_checker
+
+
+async def requiere_password_actualizada(
+    usuario: UsuarioActual = Depends(get_current_user),
+) -> UsuarioActual:
+    """Bloquea el grupo protegido mientras el cambio de contraseña esté pendiente (RN-06)."""
+
+    if usuario.debe_cambiar_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debe cambiar su contraseña antes de continuar",
+        )
+    return usuario
 
 
 # Alias en español para respetar nomenclatura canónica del proyecto

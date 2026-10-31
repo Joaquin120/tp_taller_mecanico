@@ -2,7 +2,7 @@ import app.modules.clientes.models  # noqa: F401
 import app.modules.ordenes.models  # noqa: F401
 import app.modules.repuestos.models  # noqa: F401
 import app.modules.usuarios.models  # noqa: F401
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 import pytest
@@ -310,3 +310,154 @@ async def test_login_repetido_6_veces_dispara_429_en_el_sexto():
             assert res_6.status_code == 429
             assert res_6.headers.get("retry-after") == "60"
 
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_exitoso_emite_cookie_y_actualiza():
+    user = UsuarioActual(
+        id=7,
+        email="cambio@test.com",
+        nombre="Usuario Cambio",
+        activo=True,
+        debe_cambiar_password=True,
+        roles=["MECANICO"],
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    mock_uow = AsyncMock()
+    app.dependency_overrides[get_usuarios_uow] = lambda: mock_uow
+
+    nuevo_token = crear_access_token({"sub": "cambio@test.com", "roles": ["MECANICO"]})
+    mock_user_ret = Usuario(id=7, email="cambio@test.com", nombre="Usuario Cambio", password_hash="new_h", activo=True, debe_cambiar_password=False)
+
+    try:
+        with patch.object(AuthService, "cambiar_password", return_value=(mock_user_ret, nuevo_token)):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/cambiar-password",
+                    json={
+                        "password_actual": "PasswordAnterior123",
+                        "password_nueva": "PasswordNueva123!",
+                    },
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["debe_cambiar_password"] is False
+        assert "actualizada" in data["mensaje"].lower()
+        assert "set-cookie" in response.headers
+        assert "access_token=" in response.headers["set-cookie"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_clave_actual_incorrecta_401():
+    user = UsuarioActual(
+        id=7,
+        email="cambio@test.com",
+        nombre="Usuario Cambio",
+        activo=True,
+        debe_cambiar_password=True,
+        roles=["MECANICO"],
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+    mock_uow = AsyncMock()
+    app.dependency_overrides[get_usuarios_uow] = lambda: mock_uow
+
+    try:
+        with patch.object(
+            AuthService,
+            "cambiar_password",
+            side_effect=HTTPException(status_code=401, detail="La contraseña actual es incorrecta"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/cambiar-password",
+                    json={
+                        "password_actual": "PasswordErronea123",
+                        "password_nueva": "PasswordNueva123!",
+                    },
+                )
+
+        assert response.status_code == 401
+        assert "incorrecta" in response.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_sin_sesion_responde_401():
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/auth/cambiar-password",
+            json={
+                "password_actual": "Password123",
+                "password_nueva": "PasswordNueva123",
+            },
+        )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_cambiar_password_nueva_invalida_422():
+    user = UsuarioActual(
+        id=7,
+        email="cambio@test.com",
+        nombre="Usuario Cambio",
+        activo=True,
+        debe_cambiar_password=True,
+        roles=["MECANICO"],
+    )
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            # Password nueva de menos de 6 caracteres
+            response = await client.post(
+                "/auth/cambiar-password",
+                json={
+                    "password_actual": "PasswordValida123",
+                    "password_nueva": "123",
+                },
+            )
+        assert response.status_code == 422
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_grupo_protegido_bloqueado_si_debe_cambiar_password_403():
+    user_bloqueado = UsuarioActual(
+        id=8,
+        email="bloqueado@test.com",
+        nombre="Usuario Bloqueado",
+        activo=True,
+        debe_cambiar_password=True,
+        roles=["ADMIN"],
+    )
+    app.dependency_overrides[get_current_user] = lambda: user_bloqueado
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            # Intenta acceder a una ruta protegida
+            response = await client.get("/eventos")
+        assert response.status_code == 403
+        assert "cambiar su contraseña" in response.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)

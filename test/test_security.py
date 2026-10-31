@@ -108,3 +108,12 @@ def test_token_expirado_falla():
 def test_token_invalido_falla():
     with pytest.raises(jwt.PyJWTError):
         decodificar_access_token("token_invalido_malformado")
+
+
+def test_crear_access_token_con_emitido_en_preserva_timestamp():
+    from datetime import datetime, timezone
+    momento = datetime.now(timezone.utc)
+    token = crear_access_token({"sub": "test@test.com"}, emitido_en=momento)
+    decoded = decodificar_access_token(token)
+
+    assert decoded["iat"] == momento.timestamp()

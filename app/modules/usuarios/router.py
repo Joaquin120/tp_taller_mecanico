@@ -1,21 +1,33 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import UsuarioActual, get_current_user
+from app.core.auth import UsuarioActual, get_current_user, requiere_rol
 from app.core.config import get_settings
 from app.core.database import get_session
+from app.core.paginacion import PaginatedResponse, ParamsPaginacion
 from app.modules.usuarios.schemas import (
+    AsignacionRolResponse,
+    AsignarRolRequest,
+    CambiarPasswordRequest,
+    CambiarPasswordResponse,
+    CrearUsuarioRequest,
+    EventoSeguridadResponse,
     LoginRequest,
     LoginResponse,
     LogoutResponse,
+    MensajeResponse,
     RegistroClienteRequest,
     RegistroClienteResponse,
+    UsuarioCreadoResponse,
     YoResponse,
 )
-from app.modules.usuarios.service import AuthService
+from app.modules.usuarios.service import AuditoriaService, AuthService, PersonalService, armar_asignacion_response
 from app.modules.usuarios.unit_of_work import UsuariosUnitOfWork
 
 router = APIRouter(prefix="", tags=["auth"])
+router_protegido = APIRouter(prefix="", tags=["protegido"])
 
 
 async def get_usuarios_uow(
@@ -99,6 +111,44 @@ async def login(
 
 
 @router.post(
+    "/cambiar-password",
+    response_model=CambiarPasswordResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cambio de contraseña autenticado",
+)
+async def cambiar_password(
+    payload: CambiarPasswordRequest,
+    request: Request,
+    response: Response,
+    usuario: UsuarioActual = Depends(get_current_user),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> CambiarPasswordResponse:
+    """Cambia la contraseña, desbloquea el grupo protegido e invalida sesiones previas (RN-07)."""
+    settings = get_settings()
+    _, token = await AuthService.cambiar_password(
+        usuario_id=usuario.id,
+        dto=payload,
+        roles=usuario.roles,
+        session_factory=request.app.state.session_factory,
+        uow=uow,
+    )
+
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=settings.JWT_EXPIRATION_SECONDS,
+        secure=settings.COOKIE_SECURE,
+    )
+
+    return CambiarPasswordResponse(
+        mensaje="Contraseña actualizada correctamente",
+        debe_cambiar_password=False,
+    )
+
+
+@router.post(
     "/logout",
     response_model=LogoutResponse,
     status_code=status.HTTP_200_OK,
@@ -133,3 +183,89 @@ async def obtener_yo(
         debe_cambiar_password=usuario.debe_cambiar_password,
         cliente_id=usuario.cliente_id,
     )
+
+@router_protegido.post(
+    "/usuarios",
+    response_model=UsuarioCreadoResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Alta de personal con contraseña provisoria",
+)
+async def crear_usuario(
+    payload: CrearUsuarioRequest,
+    actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> UsuarioCreadoResponse:
+    """Crea un usuario de personal con rol vigente y cambio de contraseña pendiente."""
+    usuario, roles = await PersonalService.crear_usuario(payload, actor, uow)
+    return UsuarioCreadoResponse(
+        id=usuario.id,
+        email=usuario.email,
+        nombre=usuario.nombre,
+        activo=usuario.activo,
+        debe_cambiar_password=usuario.debe_cambiar_password,
+        roles=roles,
+    )
+
+
+@router_protegido.get(
+    "/usuarios/{id}/roles",
+    response_model=list[AsignacionRolResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Historial de roles de un usuario",
+)
+async def listar_roles(
+    id: int,
+    actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> list[AsignacionRolResponse]:
+    """Devuelve todas las asignaciones del usuario, vigentes e históricas."""
+    return await PersonalService.listar_roles(id, uow)
+
+
+@router_protegido.post(
+    "/usuarios/{id}/roles",
+    response_model=AsignacionRolResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Asignación de rol",
+)
+async def asignar_rol(
+    id: int,
+    payload: AsignarRolRequest,
+    actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> AsignacionRolResponse:
+    """Asigna un rol vigente o reemplaza una asignación abierta vencida."""
+    asignacion = await PersonalService.asignar_rol(id, payload, actor, uow)
+    return armar_asignacion_response(asignacion)
+
+
+@router_protegido.delete(
+    "/usuarios/{id}/roles/{rol}",
+    response_model=MensajeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Revocación de rol",
+)
+async def revocar_rol(
+    id: int,
+    rol: str,
+    actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> MensajeResponse:
+    """Revoca una asignación abierta respetando la autoprotección admin (RN-05)."""
+    await PersonalService.revocar_rol(id, rol, actor, uow)
+    return MensajeResponse(mensaje="Rol revocado correctamente", rol=rol)
+
+
+@router_protegido.get(
+    "/eventos",
+    response_model=PaginatedResponse[EventoSeguridadResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Consulta paginada de eventos de seguridad",
+)
+async def listar_eventos(
+    params: ParamsPaginacion = Depends(),
+    actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
+) -> PaginatedResponse[EventoSeguridadResponse]:
+    """Lista los eventos de seguridad del más reciente al más antiguo."""
+    return await AuditoriaService.listar_eventos(params.page, params.size, uow)
