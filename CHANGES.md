@@ -91,7 +91,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ## FASE 0 — Cimientos y Ciclo de Vida
 
 ### [C-01] `foundation-config-lifespan`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Estructura de carpetas obligatoria, configuración con `pydantic-settings` y ciclo de vida ASGI
   - Configuración en `app/core/config.py` con `BaseSettings`, `@computed_field` para armado de URL `postgresql+asyncpg://`, sin secretos por defecto (falla si faltan `POSTGRES_PASSWORD` o `JWT_SECRET_KEY`)
   - `app/core/database.py`: motor asincrónico SQLAlchemy con `pool_size` configurable, `async_sessionmaker(expire_on_commit=False)` y función `get_session`
