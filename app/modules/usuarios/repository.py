@@ -1,9 +1,15 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.repository import BaseRepository
-from app.modules.usuarios.models import AsignacionRol, IntentoAcceso, Usuario
+from app.modules.usuarios.models import (
+    AsignacionRol,
+    EventoSeguridad,
+    IntentoAcceso,
+    Usuario,
+)
 
 
 class UsuarioRepository(BaseRepository[Usuario]):
@@ -37,6 +43,71 @@ class AsignacionRolRepository(BaseRepository[AsignacionRol]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_abierta(
+        self,
+        usuario_id: int,
+        rol: str,
+        for_update: bool = False,
+    ) -> AsignacionRol | None:
+        """Obtiene la asignación no revocada de un rol, opcionalmente bloqueándola."""
+        stmt = select(AsignacionRol).where(
+            AsignacionRol.usuario_id == usuario_id,
+            AsignacionRol.rol == rol,
+            AsignacionRol.revocada_en.is_(None),
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def listar_por_usuario(self, usuario_id: int) -> Sequence[AsignacionRol]:
+        """Devuelve el historial completo de asignaciones del usuario."""
+        stmt = (
+            select(AsignacionRol)
+            .where(AsignacionRol.usuario_id == usuario_id)
+            .order_by(AsignacionRol.desde.desc(), AsignacionRol.id.desc())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def contar_admins_vigentes(self, excluir_id: int | None = None) -> int:
+        """Cuenta administradores vigentes, excluyendo opcionalmente una asignación (RN-05)."""
+        ahora = datetime.now(timezone.utc)
+        stmt = (
+            select(func.count(func.distinct(AsignacionRol.usuario_id)))
+            .select_from(AsignacionRol)
+            .where(
+                AsignacionRol.rol == "ADMIN",
+                AsignacionRol.revocada_en.is_(None),
+                or_(
+                    AsignacionRol.vence_en.is_(None),
+                    AsignacionRol.vence_en > ahora,
+                ),
+            )
+        )
+        if excluir_id is not None:
+            stmt = stmt.where(AsignacionRol.id != excluir_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
+
+class EventoSeguridadRepository(BaseRepository[EventoSeguridad]):
+    """Repositorio de auditoría de seguridad (sólo agregado)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(EventoSeguridad, session)
+
+    async def listar_paginado(self, offset: int, limit: int) -> Sequence[EventoSeguridad]:
+        """Lista eventos del más reciente al más antiguo."""
+        stmt = (
+            select(EventoSeguridad)
+            .order_by(EventoSeguridad.cuando.desc(), EventoSeguridad.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
 
 
 class IntentoAccesoRepository(BaseRepository[IntentoAcceso]):

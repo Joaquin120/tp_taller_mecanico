@@ -165,7 +165,8 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ---
 
 ### [C-05] `authorization-rbac-protection`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
+  - **Nota**: la tarea 7.3 y la suite de archivos `.http` de los casos de cátedra se transfieren a **C-09** `verification-suite-e2e-docs`, conforme a su scope; su ejecución requiere PostgreSQL real más `python seed.py`.
 - **Scope**: Dependencias de autorización RBAC en base de datos, autoprotección de administradores y cambio obligatorio de contraseña
   - `app/core/dependencies.py`: `get_usuario_actual` (lee cookie, valida JWT y verifica usuario activo); `requiere_rol(roles)` consultando en cada request las filas vigentes en `asignacion_rol` (RN-04)
   - Autoprotección admin: el administrador no puede revocarse a sí mismo el rol `ADMIN` ni dejar al sistema sin administradores vigentes (409) (RN-05)

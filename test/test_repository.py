@@ -182,3 +182,54 @@ async def test_soft_delete_repository_count():
 
     assert count == 5
     session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_evento_seguridad_repository_listar_paginado():
+    from app.modules.usuarios.repository import EventoSeguridadRepository
+    from app.modules.usuarios.models import EventoSeguridad
+
+    session = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = []
+    session.execute.return_value = mock_res
+
+    repo = EventoSeguridadRepository(session)
+    result = await repo.listar_paginado(offset=10, limit=20)
+
+    assert result == []
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_asignacion_rol_repository_get_abierta_for_update():
+    from app.modules.usuarios.repository import AsignacionRolRepository
+    from app.modules.usuarios.models import AsignacionRol
+
+    session = AsyncMock()
+    mock_res = MagicMock()
+    asig = AsignacionRol(id=1, usuario_id=2, rol="ADMIN")
+    mock_res.scalar_one_or_none.return_value = asig
+    session.execute.return_value = mock_res
+
+    repo = AsignacionRolRepository(session)
+    res = await repo.get_abierta(usuario_id=2, rol="ADMIN", for_update=True)
+
+    assert res == asig
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_asignacion_rol_repository_contar_admins_vigentes():
+    from app.modules.usuarios.repository import AsignacionRolRepository
+
+    session = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalar_one.return_value = 2
+    session.execute.return_value = mock_res
+
+    repo = AsignacionRolRepository(session)
+    count = await repo.contar_admins_vigentes(excluir_id=1)
+
+    assert count == 2
+    session.execute.assert_awaited_once()

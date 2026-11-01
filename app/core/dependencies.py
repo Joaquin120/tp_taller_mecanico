@@ -3,6 +3,7 @@ from app.core.auth import (
     get_current_user,
     get_usuario_actual,
     require_roles,
+    requiere_password_actualizada,
     requiere_rol,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "get_current_user",
     "get_usuario_actual",
     "require_roles",
+    "requiere_password_actualizada",
     "requiere_rol",
 ]

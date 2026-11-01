@@ -38,7 +38,7 @@ def armar_paginacion(
     """
     if size <= 0:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="El tamaño de página debe ser mayor a 0",
         )
 
@@ -46,7 +46,7 @@ def armar_paginacion(
 
     if page > pages:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Página fuera de rango. Página solicitada: {page}, total de páginas: {pages}",
         )
 
