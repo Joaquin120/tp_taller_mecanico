@@ -26,7 +26,7 @@ _CONSTRAINT_MAP: dict[str, tuple[int, str]] = {
         "El usuario ya posee ese rol vigente",
     ),
     "ck_asignacion_rol_rol_valido": (
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         "Rol inválido",
     ),
     "asignacion_rol_usuario_id_fkey": (
@@ -42,8 +42,8 @@ _CONSTRAINT_MAP: dict[str, tuple[int, str]] = {
 _SQLSTATE_MAP: dict[str, tuple[int, str]] = {
     "23505": (status.HTTP_409_CONFLICT, "El recurso ya existe"),
     "23503": (status.HTTP_400_BAD_REQUEST, "Referencia inválida"),
-    "23514": (status.HTTP_422_UNPROCESSABLE_ENTITY, "Valor inválido"),
-    "23502": (status.HTTP_422_UNPROCESSABLE_ENTITY, "Campo obligatorio ausente"),
+    "23514": (status.HTTP_422_UNPROCESSABLE_CONTENT, "Valor inválido"),
+    "23502": (status.HTTP_422_UNPROCESSABLE_CONTENT, "Campo obligatorio ausente"),
 }
 
 

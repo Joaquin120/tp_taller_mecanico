@@ -87,7 +87,7 @@ async def test_get_session_yields_session() -> None:
 @pytest.mark.asyncio
 async def test_lifespan_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POSTGRES_PASSWORD", "secret")
-    monkeypatch.setenv("JWT_SECRET_KEY", "secret_jwt")
+    monkeypatch.setenv("JWT_SECRET_KEY", "secret_jwt_de_pruebas_suficientemente_largo")
 
     from main import lifespan
 

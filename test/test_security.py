@@ -14,7 +14,7 @@ from app.core.security import (
 @pytest.fixture(autouse=True)
 def setup_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("POSTGRES_PASSWORD", "secret")
-    monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_1234567890")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_1234567890_largo")
     monkeypatch.setenv("BCRYPT_ROUNDS", "4")  # rounds bajos para tests veloces
 
 

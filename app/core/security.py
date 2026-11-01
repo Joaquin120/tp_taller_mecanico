@@ -6,16 +6,22 @@ import jwt
 
 from app.core.config import get_settings
 
-_bcrypt_semaphore: asyncio.Semaphore | None = None
+_bcrypt_semaphores: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 
 def get_bcrypt_semaphore() -> asyncio.Semaphore:
     """Retorna el semáforo concurrente para limitar operaciones de bcrypt en CPU."""
-    global _bcrypt_semaphore
-    if _bcrypt_semaphore is None:
-        settings = get_settings()
-        _bcrypt_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BCRYPT)
-    return _bcrypt_semaphore
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        if loop not in _bcrypt_semaphores:
+            settings = get_settings()
+            _bcrypt_semaphores[loop] = asyncio.Semaphore(settings.MAX_CONCURRENT_BCRYPT)
+        return _bcrypt_semaphores[loop]
+    settings = get_settings()
+    return asyncio.Semaphore(settings.MAX_CONCURRENT_BCRYPT)
 
 
 async def hash_password(plain: str) -> str:

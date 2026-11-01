@@ -1,10 +1,10 @@
-# Spec Delta
+# api-error-handling Specification
 
 ## Purpose
 
 Traduce los errores de integridad de la base de datos a respuestas HTTP de negocio predecibles, sin exponer SQL, nombres de restricciones ni trazas internas de PostgreSQL.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Traducción de violaciones de unicidad
 Una violación de una restricción UNIQUE conocida SHALL responder HTTP 409 con un mensaje de negocio. La transacción SHALL revertirse y no SHALL quedar ninguna fila parcial de la operación rechazada.
@@ -18,11 +18,11 @@ Una violación de una restricción UNIQUE conocida SHALL responder HTTP 409 con 
 - **THEN** responde HTTP 409 y la transacción revierte completa
 
 ### Requirement: Traducción de violaciones de referencia
-Una violación de clave foránea conocida SHALL responder HTTP 409 con un mensaje de negocio. Una violación de una restricción CHECK conocida SHALL responder HTTP 422.
+Una violación de clave foránea conocida SHALL responder HTTP 404 cuando la referencia es a un usuario inexistente, con un mensaje de negocio. Una violación de una restricción CHECK conocida SHALL responder HTTP 422.
 
 #### Scenario: Referencia a un recurso inexistente
 - **WHEN** una inserción referencia una fila que no existe
-- **THEN** responde HTTP 409 con un mensaje de negocio
+- **THEN** responde HTTP 404 con un mensaje de negocio
 
 #### Scenario: Valor rechazado por CHECK
 - **WHEN** una inserción viola una restricción CHECK conocida

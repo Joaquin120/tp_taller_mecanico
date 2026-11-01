@@ -22,7 +22,7 @@ from app.modules.usuarios.models import Usuario
 @pytest.fixture(autouse=True)
 def setup_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("POSTGRES_PASSWORD", "secret")
-    monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_1234567890")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_1234567890_largo")
 
 
 def crear_request_con_cookie(cookie_val: str | None) -> Request:
@@ -215,7 +215,9 @@ def test_aliases_en_espanol():
 
 @pytest.mark.asyncio
 async def test_get_current_user_iat_anterior_al_cambio_lanza_401():
-    referencia = datetime(2026, 1, 1, 12, 0, 0, 500000, tzinfo=timezone.utc)
+    # Base relativa a 'ahora' para que exp (= iat + JWT_EXPIRATION_SECONDS) siga vigente
+    # y el token llegue hasta la comparacion RN-07 en lugar de morir por expiracion.
+    referencia = datetime.now(timezone.utc).replace(microsecond=500000)
     token = crear_access_token(
         {"sub": "activo@test.com"},
         emitido_en=referencia - timedelta(seconds=1),
@@ -242,14 +244,21 @@ async def test_get_current_user_iat_anterior_al_cambio_lanza_401():
 
     assert exc_info.value.status_code == 401
     assert "invalidada" in exc_info.value.detail.lower()
+    # El 401 debe provenir de la invalidación de la sesión (RN-07), no de un token vencido.
+    assert "caducada" not in exc_info.value.detail.lower()
 
 
 @pytest.mark.asyncio
 async def test_get_current_user_mismo_segundo_fraccion_anterior_lanza_401():
-    referencia = datetime(2026, 1, 1, 12, 0, 0, 900000, tzinfo=timezone.utc)
+    # Ancla al inicio de un segundo YA transcurrido: iat (.800000) y el cambio de contraseña
+    # (.900000) caen en el MISMO segundo calendario con fracción de iat estrictamente menor.
+    # Un comparador que truncara iat a segundos enteros aceptaría esta sesión; RN-07 no.
+    # El ancla en el pasado garantiza además que iat nunca parezca un timestamp futuro.
+    segundo = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=1)
+    referencia = segundo + timedelta(milliseconds=900)
     token = crear_access_token(
         {"sub": "activo@test.com"},
-        emitido_en=referencia - timedelta(microseconds=100000),
+        emitido_en=referencia - timedelta(milliseconds=100),
     )
     request = crear_request_con_cookie(token)
 
@@ -272,11 +281,19 @@ async def test_get_current_user_mismo_segundo_fraccion_anterior_lanza_401():
         await get_current_user(request, mock_session)
 
     assert exc_info.value.status_code == 401
+    # Debe ser la invalidación por cambio de contraseña (RN-07), nunca un token vencido:
+    # sin este control el test aprobaría vacío con cualquier 401.
+    assert "invalidada" in exc_info.value.detail.lower()
+    assert "caducada" not in exc_info.value.detail.lower()
 
 
 @pytest.mark.asyncio
 async def test_get_current_user_iat_igual_al_cambio_es_valido():
-    referencia = datetime(2026, 1, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+    # -1s respecto del reloj real conserva la fracción .123456 y evita que iat parezca
+    # futuro para PyJWT; el token y el cambio comparten exactamente el mismo timestamp.
+    referencia = datetime.now(timezone.utc).replace(microsecond=123456) - timedelta(
+        seconds=1
+    )
     token = crear_access_token({"sub": "activo@test.com"}, emitido_en=referencia)
     request = crear_request_con_cookie(token)
 
@@ -306,10 +323,18 @@ async def test_get_current_user_iat_igual_al_cambio_es_valido():
 
 @pytest.mark.asyncio
 async def test_get_current_user_cambiada_en_naive_se_normaliza_a_utc():
-    referencia_naive = datetime(2026, 1, 1, 12, 0, 0, 500000)
+    # El token se emite exactamente 1 segundo DESPUÉS del cambio; el cambio se guarda como
+    # datetime naive (misma fracción .500000) para forzar la normalización a UTC en
+    # get_current_user. El ancla -1s (y el cambio, otros -1s antes) deja iat siempre en el
+    # pasado de forma determinística: reemplazar microsecond puede correr el instante
+    # hasta +0.5s hacia el futuro y PyJWT rechazaría iat como inmaduro.
+    referencia_aware = (
+        datetime.now(timezone.utc).replace(microsecond=500000) - timedelta(seconds=1)
+    )
+    referencia_naive = (referencia_aware - timedelta(seconds=1)).replace(tzinfo=None)
     token = crear_access_token(
         {"sub": "activo@test.com"},
-        emitido_en=referencia_naive.replace(tzinfo=timezone.utc) + timedelta(seconds=1),
+        emitido_en=referencia_aware,
     )
     request = crear_request_con_cookie(token)
 

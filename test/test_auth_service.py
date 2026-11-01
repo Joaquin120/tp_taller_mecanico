@@ -183,6 +183,8 @@ async def test_login_exitoso():
 
     # Session 3: audit intento
     session_audit = AsyncMock()
+    # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
+    session_audit.add = MagicMock()
 
     sessions = [session_rl, session_auth, session_audit]
 
@@ -206,6 +208,7 @@ async def test_login_exitoso():
     assert user_res.email == "login@test.com"
     assert roles_res == ["CLIENTE"]
     assert isinstance(token, str)
+    session_audit.add.assert_called_once()
     session_audit.commit.assert_awaited_once()
 
 
@@ -233,6 +236,8 @@ async def test_login_credenciales_incorrectas_lanza_401():
     session_auth.execute.side_effect = [res_usr]
 
     session_audit = AsyncMock()
+    # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
+    session_audit.add = MagicMock()
     sessions = [session_rl, session_auth, session_audit]
 
     class FakeSessionFactory:
@@ -274,6 +279,8 @@ async def test_login_usuario_inexistente_usa_dummy_hash_y_lanza_401():
     session_auth.execute.side_effect = [res_usr]
 
     session_audit = AsyncMock()
+    # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
+    session_audit.add = MagicMock()
     sessions = [session_rl, session_auth, session_audit]
 
     class FakeSessionFactory:

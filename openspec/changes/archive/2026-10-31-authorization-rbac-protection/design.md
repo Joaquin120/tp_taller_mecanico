@@ -100,7 +100,7 @@ Paginado con `ParamsPaginacion` y `armar_paginacion` (`app/core/paginacion.py`),
 | `usuario_email_key`, `ix_usuario_email` | 409 | “El correo ya se encuentra registrado” |
 | `uq_asignacion_rol_activa` | 409 | “El usuario ya posee ese rol vigente” |
 | `ck_asignacion_rol_rol_valido` | 422 | “Rol inválido” |
-| FK de `asignacion_rol` | 409 | “Referencia a un recurso inexistente” |
+| FK de `asignacion_rol` | 404 | “Referencia a un recurso inexistente” |
 
 Si el nombre no está en la lista pero el SQLSTATE es conocido (`23505` único, `23503` FK, `23514` CHECK, `23502` NOT NULL), se usa un mensaje genérico de esa clase (409/409/422/422). Cualquier otro error de integridad responde 400 genérico. La respuesta nunca incluye `exc.orig`, SQL, tabla, columna, constraint ni traza; el detalle técnico se registra sólo en el log del servidor. Las excepciones que no son `IntegrityError` no se interceptan.
 
