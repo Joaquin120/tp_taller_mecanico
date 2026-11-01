@@ -9,6 +9,8 @@ from app.core.auth import requiere_password_actualizada
 from app.core.config import get_settings
 from app.core.database import crear_fabrica_sesiones, crear_motor
 from app.modules.health.router import router as health_router
+from app.modules.ordenes.router import router_protegido as ordenes_router_protegido
+from app.modules.repuestos.router import router_protegido as repuestos_router_protegido
 from app.modules.usuarios.router import router as auth_router
 from app.modules.usuarios.router import router_protegido
 
@@ -100,5 +102,13 @@ app.include_router(health_router)
 app.include_router(auth_router, prefix="/auth")
 app.include_router(
     router_protegido,
+    dependencies=[Depends(requiere_password_actualizada)],
+)
+app.include_router(
+    repuestos_router_protegido,
+    dependencies=[Depends(requiere_password_actualizada)],
+)
+app.include_router(
+    ordenes_router_protegido,
     dependencies=[Depends(requiere_password_actualizada)],
 )
