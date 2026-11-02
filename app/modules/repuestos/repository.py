@@ -1,8 +1,15 @@
+"""Repositorios del módulo de repuestos.
+
+Reglas duras:
+- Sólo se llama a `session.flush()`; nunca a `session.commit()` (lo hace el UoW).
+- `movimiento_stock` e `historial_precio_repuesto` son de sólo agregado: sus
+  repositorios exponen inserciones y consultas, y bloquean `update`/`delete`.
+"""
+
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.repository import BaseRepository, SoftDeleteRepository
 from app.modules.repuestos.models import (
@@ -12,18 +19,14 @@ from app.modules.repuestos.models import (
 )
 
 
-class StockInsuficienteError(Exception):
-    """El stock disponible no alcanza para registrar una salida."""
-
-
 class RepuestoRepository(SoftDeleteRepository[Repuesto]):
-    """Repositorio para la entidad Repuesto con borrado lógico."""
+    """Repositorio de repuestos con filtrado de borrado lógico."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session, Repuesto)
+        super().__init__(Repuesto, session)
 
-    async def get_by_codigo(self, codigo: str) -> Repuesto | None:
-        """Busca un repuesto vigente por código (RN-01)."""
+    async def get_by_codigo_vigente(self, codigo: str) -> Repuesto | None:
+        """Busca un repuesto vigente por código (índice único parcial)."""
         stmt = select(Repuesto).where(
             Repuesto.codigo == codigo,
             Repuesto.borrado_en.is_(None),
@@ -31,135 +34,119 @@ class RepuestoRepository(SoftDeleteRepository[Repuesto]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def buscar_por_descripcion(
+    async def listar_paginado(
         self,
-        descripcion: str | None,
-        offset: int = 0,
-        limit: int | None = None,
+        q: str | None,
+        offset: int,
+        limit: int,
     ) -> Sequence[Repuesto]:
-        """Busca repuestos vigentes por descripción con parámetro ligado."""
+        """Lista repuestos vigentes, filtrando por descripción y ordenando por código."""
         stmt = select(Repuesto).where(Repuesto.borrado_en.is_(None))
-        if descripcion:
-            stmt = stmt.where(Repuesto.descripcion.ilike(f"%{descripcion}%"))
-        stmt = stmt.order_by(Repuesto.id).offset(offset)
-        if limit is not None:
-            stmt = stmt.limit(limit)
+        if q:
+            stmt = stmt.where(Repuesto.descripcion.ilike(f"%{q}%"))
+        stmt = stmt.order_by(Repuesto.codigo.asc()).offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def contar_por_descripcion(self, descripcion: str | None) -> int:
-        """Cuenta repuestos vigentes aplicando el mismo filtro que el listado."""
+    async def contar_vigentes(self, q: str | None) -> int:
+        """Cuenta repuestos vigentes con el mismo filtro que `listar_paginado`."""
         stmt = (
             select(func.count())
             .select_from(Repuesto)
             .where(Repuesto.borrado_en.is_(None))
         )
-        if descripcion:
-            stmt = stmt.where(Repuesto.descripcion.ilike(f"%{descripcion}%"))
+        if q:
+            stmt = stmt.where(Repuesto.descripcion.ilike(f"%{q}%"))
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
-    async def get_by_id_con_movimientos(self, repuesto_id: int) -> Repuesto | None:
-        """Obtiene el repuesto precargando sus movimientos de stock."""
+    async def get_para_actualizar(self, id: int) -> Repuesto | None:
+        """Obtiene un repuesto vigente bloqueando la fila para mutaciones atómicas."""
         stmt = (
             select(Repuesto)
-            .where(
-                Repuesto.id == repuesto_id,
-                Repuesto.borrado_en.is_(None),
-            )
-            .options(selectinload(Repuesto.movimientos))
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def get_by_id_con_historial_precios(
-        self, repuesto_id: int
-    ) -> Repuesto | None:
-        """Obtiene el repuesto precargando su historial de precios."""
-        stmt = (
-            select(Repuesto)
-            .where(
-                Repuesto.id == repuesto_id,
-                Repuesto.borrado_en.is_(None),
-            )
-            .options(selectinload(Repuesto.historial_precios))
+            .where(Repuesto.id == id, Repuesto.borrado_en.is_(None))
+            .with_for_update()
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
 
-class MovimientoStockRepository(BaseRepository[MovimientoStock]):
-    """Repositorio de movimientos de stock.
+class _SoloAgregadoRepository(BaseRepository):
+    """Base de repositorios inmutables: permite insertar y consultar, nada más."""
 
-    `registrar_movimiento` es el ÚNICO punto de escritura del stock (RN-14):
-    lo usan tanto la reposición como la terminación de órdenes de trabajo.
-    """
+    async def update(self, entity):  # type: ignore[override]
+        raise NotImplementedError(
+            f"{self.model.__name__} es de sólo agregado: no admite update"
+        )
+
+    async def delete(self, entity):  # type: ignore[override]
+        raise NotImplementedError(
+            f"{self.model.__name__} es de sólo agregado: no admite delete"
+        )
+
+
+class MovimientoStockRepository(_SoloAgregadoRepository):
+    """Historial de movimientos de stock: sólo inserciones y consultas."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session, MovimientoStock)
+        super().__init__(MovimientoStock, session)
 
-    async def listar_por_repuesto(self, repuesto_id: int) -> Sequence[MovimientoStock]:
+    async def listar_por_repuesto(
+        self,
+        repuesto_id: int,
+        offset: int,
+        limit: int,
+    ) -> Sequence[MovimientoStock]:
         stmt = (
             select(MovimientoStock)
             .where(MovimientoStock.repuesto_id == repuesto_id)
-            .order_by(MovimientoStock.cuando, MovimientoStock.id)
+            .order_by(MovimientoStock.cuando.desc(), MovimientoStock.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def registrar_movimiento(
-        self,
-        *,
-        repuesto: Repuesto,
-        cantidad: int,
-        motivo: str,
-        usuario_id: int,
-        orden_id: int | None = None,
-    ) -> MovimientoStock:
-        """Punto único de escritura de stock (RN-14).
-
-        Actualiza el stock del repuesto e inserta el movimiento en la misma
-        transacción. Una cantidad positiva repone stock; una negativa lo descuenta.
-        """
-        if cantidad == 0:
-            raise ValueError("La cantidad de un movimiento de stock no puede ser cero")
-
-        nuevo_stock = repuesto.stock + cantidad
-        if nuevo_stock < 0:
-            raise StockInsuficienteError(
-                f"Stock insuficiente para el repuesto {repuesto.id}: "
-                f"disponible {repuesto.stock}, solicitado {-cantidad}"
-            )
-
-        repuesto.stock = nuevo_stock
-        movimiento = MovimientoStock(
-            repuesto_id=repuesto.id,
-            orden_id=orden_id,
-            usuario_id=usuario_id,
-            cantidad=cantidad,
-            motivo=motivo,
+    async def contar_por_repuesto(self, repuesto_id: int) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(MovimientoStock)
+            .where(MovimientoStock.repuesto_id == repuesto_id)
         )
-        self.session.add(movimiento)
-        await self.session.flush()
-        return movimiento
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
 
 
-class HistorialPrecioRepuestoRepository(BaseRepository[HistorialPrecioRepuesto]):
-    """Repositorio del historial de precios (sólo agregado)."""
+class HistorialPrecioRepuestoRepository(_SoloAgregadoRepository):
+    """Historial de precios: sólo inserciones y consultas."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session, HistorialPrecioRepuesto)
+        super().__init__(HistorialPrecioRepuesto, session)
 
     async def listar_por_repuesto(
-        self, repuesto_id: int
+        self,
+        repuesto_id: int,
+        offset: int,
+        limit: int,
     ) -> Sequence[HistorialPrecioRepuesto]:
         stmt = (
             select(HistorialPrecioRepuesto)
             .where(HistorialPrecioRepuesto.repuesto_id == repuesto_id)
             .order_by(
-                HistorialPrecioRepuesto.cuando,
-                HistorialPrecioRepuesto.id,
+                HistorialPrecioRepuesto.cuando.desc(),
+                HistorialPrecioRepuesto.id.desc(),
             )
+            .offset(offset)
+            .limit(limit)
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def contar_por_repuesto(self, repuesto_id: int) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(HistorialPrecioRepuesto)
+            .where(HistorialPrecioRepuesto.repuesto_id == repuesto_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one()

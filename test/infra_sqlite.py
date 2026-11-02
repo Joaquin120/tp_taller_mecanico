@@ -13,7 +13,8 @@ Transparencia obligatoria (no afirmar falsamente "end-to-end"):
   2. un único `commit` por Unit of Work (`contador_commits` permite assertearlo).
 - QUÉ NO CUBRE (requiere PostgreSQL, ver C-09):
   * los índices únicos PARCIALES `uq_asignacion_rol_activa`
-    (`WHERE revocada_en IS NULL`) y `uq_vehiculo_patente_activa`
+    (`WHERE revocada_en IS NULL`), `uq_vehiculo_patente_activa`
+    (`WHERE borrado_en IS NULL`) y `uq_repuesto_codigo_activo`
     (`WHERE borrado_en IS NULL`); SQLite los crea completos y más estrictos que
     producción, por eso se eliminan aquí;
   * los triggers PL/pgSQL de sólo agregado (`test/solo_agregado.sql`);
@@ -28,7 +29,7 @@ from datetime import datetime, timezone
 from types import TracebackType
 from typing import Any, Self
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 from sqlmodel import SQLModel
 
@@ -54,6 +55,17 @@ def _normalizar_entidad(entidad: Any) -> Any:
                 entidad.__dict__[nombre_columna] = actual.replace(tzinfo=timezone.utc)
         return entidad
     return _normalizar_datetime(entidad)
+
+
+@event.listens_for(Session, "loaded_as_persistent")
+def _normalizar_al_cargar(_session: Session, instancia: Any) -> None:
+    """Emula asyncpg también en cargas perezosas y refrescos implícitos.
+
+    Sin este hook, una relación cargada después de un `rollback` (que expira los
+    objetos) devolvía `datetime` naive y cualquier comparación con un valor
+    recién creado (aware) fallaba con TypeError.
+    """
+    _normalizar_entidad(instancia)
 
 
 class _Escalares:
@@ -97,11 +109,17 @@ class SesionFalsa:
     def __init__(self) -> None:
         self.engine = create_engine("sqlite://")
         SQLModel.metadata.create_all(self.engine)
-        # SQLite crea estos índices COMPLETOS (sin WHERE), más estrictos que PostgreSQL:
-        # rechazaría la reasignación de un rol vencido y la reutilización de una patente
-        # dada de baja, operaciones válidas en producción.
+        # SQLite crea este índice COMPLETO (sin WHERE), más estricto que PostgreSQL,
+        # y rechazaría la reasignación de un rol vencido que en producción es válida.
         with self.engine.begin() as conn:
             conn.execute(text("DROP INDEX IF EXISTS uq_asignacion_rol_activa"))
+            # `uq_repuesto_codigo_activo` también es parcial en PostgreSQL
+            # (`WHERE borrado_en IS NULL`). SQLite lo crea completo y bloquearía
+            # reutilizar el código de un repuesto dado de baja.
+            conn.execute(text("DROP INDEX IF EXISTS uq_repuesto_codigo_activo"))
+            # `uq_vehiculo_patente_activa` es parcial en PostgreSQL
+            # (`WHERE borrado_en IS NULL`). SQLite lo crea completo y bloquearía
+            # dar de alta un vehículo con la patente de uno dado de baja.
             conn.execute(text("DROP INDEX IF EXISTS uq_vehiculo_patente_activa"))
         self._sync = Session(self.engine, expire_on_commit=False, autoflush=False)
         self.contador_commits = 0

@@ -1,4 +1,11 @@
-from decimal import Decimal
+"""Servicios del catálogo de repuestos.
+
+Reglas de negocio aplicadas:
+- RN-14: el stock sólo cambia por alta con stock inicial o reposición; nunca por PATCH.
+- RN-20: cada cambio de precio deja una fila en `historial_precio_repuesto` en el
+  mismo UoW; un precio idéntico no genera fila.
+- Las tablas de historial son de sólo agregado: el servicio únicamente inserta.
+"""
 
 from fastapi import HTTPException, status
 
@@ -9,19 +16,21 @@ from app.modules.repuestos.models import (
     MovimientoStock,
     Repuesto,
 )
-from app.modules.repuestos.repository import StockInsuficienteError
 from app.modules.repuestos.schemas import (
     HistorialPrecioResponse,
     MovimientoStockResponse,
     ReponerStockRequest,
-    RepuestoActualizarRequest,
-    RepuestoCrearRequest,
+    RepuestoCreate,
     RepuestoResponse,
+    RepuestoUpdate,
 )
 from app.modules.repuestos.unit_of_work import RepuestosUnitOfWork
 
+MOTIVO_ALTA = "ALTA"
+MOTIVO_REPOSICION = "REPOSICION"
 
-def armar_repuesto_response(repuesto: Repuesto) -> RepuestoResponse:
+
+def _a_response(repuesto: Repuesto) -> RepuestoResponse:
     return RepuestoResponse(
         id=repuesto.id,
         codigo=repuesto.codigo,
@@ -31,33 +40,15 @@ def armar_repuesto_response(repuesto: Repuesto) -> RepuestoResponse:
     )
 
 
-def armar_movimiento_response(movimiento: MovimientoStock) -> MovimientoStockResponse:
-    return MovimientoStockResponse(
-        id=movimiento.id,
-        repuesto_id=movimiento.repuesto_id,
-        orden_id=movimiento.orden_id,
-        usuario_id=movimiento.usuario_id,
-        cantidad=movimiento.cantidad,
-        motivo=movimiento.motivo,
-        cuando=movimiento.cuando,
+def _no_encontrado() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Repuesto no encontrado",
     )
 
 
-def armar_historial_response(
-    historial: HistorialPrecioRepuesto,
-) -> HistorialPrecioResponse:
-    return HistorialPrecioResponse(
-        id=historial.id,
-        repuesto_id=historial.repuesto_id,
-        usuario_id=historial.usuario_id,
-        precio_anterior=historial.precio_anterior,
-        precio_nuevo=historial.precio_nuevo,
-        cuando=historial.cuando,
-    )
-
-
-class RepuestoService:
-    """Reglas de negocio del catálogo de repuestos y del stock."""
+class CatalogoService:
+    """Casos de uso del catálogo, stock y precios."""
 
     @staticmethod
     async def listar(
@@ -66,165 +57,193 @@ class RepuestoService:
         size: int,
         uow: RepuestosUnitOfWork,
     ) -> PaginatedResponse[RepuestoResponse]:
+        """Lista repuestos vigentes con búsqueda por descripción y paginación."""
         async with uow:
-            total = await uow.repuestos.contar_por_descripcion(q)
-            repuestos = await uow.repuestos.buscar_por_descripcion(
-                q,
+            total = await uow.repuestos.contar_vigentes(q)
+            filas = await uow.repuestos.listar_paginado(
+                q=q,
                 offset=(page - 1) * size,
                 limit=size,
             )
-            items = [armar_repuesto_response(repuesto) for repuesto in repuestos]
 
+        items = [_a_response(repuesto) for repuesto in filas]
         return armar_paginacion(items, total, page, size)
 
     @staticmethod
-    async def obtener(
-        repuesto_id: int,
-        uow: RepuestosUnitOfWork,
-    ) -> RepuestoResponse:
+    async def obtener(id: int, uow: RepuestosUnitOfWork) -> RepuestoResponse:
+        """Devuelve un repuesto vigente o 404."""
         async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
+            repuesto = await uow.repuestos.get_by_id(id)
             if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
-            return armar_repuesto_response(repuesto)
+                raise _no_encontrado()
+        return _a_response(repuesto)
 
     @staticmethod
     async def crear(
-        dto: RepuestoCrearRequest,
+        dto: RepuestoCreate,
         actor: UsuarioActual,
         uow: RepuestosUnitOfWork,
     ) -> RepuestoResponse:
+        """Crea el repuesto y, si hay stock inicial, su movimiento de alta."""
         async with uow:
+            existente = await uow.repuestos.get_by_codigo_vigente(dto.codigo)
+            if existente is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="El código de repuesto ya se encuentra registrado",
+                )
+
             repuesto = Repuesto(
                 codigo=dto.codigo,
                 descripcion=dto.descripcion,
                 precio=dto.precio,
-                stock=0,
+                stock=dto.stock_inicial,
             )
             repuesto = await uow.repuestos.add(repuesto)
 
             if dto.stock_inicial > 0:
-                await uow.movimientos.registrar_movimiento(
-                    repuesto=repuesto,
-                    cantidad=dto.stock_inicial,
-                    motivo="Stock inicial",
-                    usuario_id=actor.id,
+                await uow.movimientos.add(
+                    MovimientoStock(
+                        repuesto_id=repuesto.id,
+                        usuario_id=actor.id,
+                        cantidad=dto.stock_inicial,
+                        motivo=MOTIVO_ALTA,
+                        orden_id=None,
+                    )
                 )
 
-            return armar_repuesto_response(repuesto)
+        return _a_response(repuesto)
 
     @staticmethod
     async def actualizar(
-        repuesto_id: int,
-        dto: RepuestoActualizarRequest,
+        id: int,
+        dto: RepuestoUpdate,
         actor: UsuarioActual,
         uow: RepuestosUnitOfWork,
     ) -> RepuestoResponse:
-        """Actualiza descripción y/o precio en un único Unit of Work (RN-20)."""
+        """Actualiza descripción y/o precio; registra historial sólo si el precio cambia."""
         async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
+            repuesto = await uow.repuestos.get_para_actualizar(id)
             if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
+                raise _no_encontrado()
 
-            datos = dto.model_dump(exclude_unset=True)
-            if datos.get("descripcion") is not None:
-                repuesto.descripcion = datos["descripcion"]
+            precio_anterior = repuesto.precio
 
-            precio_nuevo: Decimal | None = datos.get("precio")
-            if precio_nuevo is not None and precio_nuevo != repuesto.precio:
-                precio_anterior = repuesto.precio
-                repuesto.precio = precio_nuevo
-                await uow.repuestos.update(repuesto)
+            if dto.descripcion is not None:
+                repuesto.descripcion = dto.descripcion
+
+            precio_cambia = dto.precio is not None and dto.precio != precio_anterior
+            if precio_cambia:
+                repuesto.precio = dto.precio
                 await uow.precios.add(
                     HistorialPrecioRepuesto(
                         repuesto_id=repuesto.id,
                         usuario_id=actor.id,
                         precio_anterior=precio_anterior,
-                        precio_nuevo=precio_nuevo,
+                        precio_nuevo=dto.precio,
                     )
                 )
-            else:
-                await uow.repuestos.update(repuesto)
 
-            return armar_repuesto_response(repuesto)
+            if dto.descripcion is not None or precio_cambia:
+                repuesto = await uow.repuestos.update(repuesto)
 
-    @staticmethod
-    async def eliminar(
-        repuesto_id: int,
-        uow: RepuestosUnitOfWork,
-    ) -> None:
-        async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
-            if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
-            await uow.repuestos.soft_delete(repuesto)
+        return _a_response(repuesto)
 
     @staticmethod
     async def reponer(
-        repuesto_id: int,
+        id: int,
         dto: ReponerStockRequest,
         actor: UsuarioActual,
         uow: RepuestosUnitOfWork,
     ) -> RepuestoResponse:
-        """Repone stock usando el punto único de escritura (RN-14)."""
+        """Incrementa el stock y registra el movimiento de reposición en el mismo UoW."""
         async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
+            repuesto = await uow.repuestos.get_para_actualizar(id)
             if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
+                raise _no_encontrado()
 
-            try:
-                await uow.movimientos.registrar_movimiento(
-                    repuesto=repuesto,
-                    cantidad=dto.cantidad,
-                    motivo="Reposición de stock",
+            repuesto.stock += dto.cantidad
+            repuesto = await uow.repuestos.update(repuesto)
+            await uow.movimientos.add(
+                MovimientoStock(
+                    repuesto_id=repuesto.id,
                     usuario_id=actor.id,
+                    cantidad=dto.cantidad,
+                    motivo=MOTIVO_REPOSICION,
+                    orden_id=None,
                 )
-            except StockInsuficienteError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=str(exc),
-                ) from exc
+            )
 
-            return armar_repuesto_response(repuesto)
+        return _a_response(repuesto)
+
+    @staticmethod
+    async def dar_de_baja(id: int, uow: RepuestosUnitOfWork) -> None:
+        """Aplica borrado lógico; el código queda libre por el índice parcial."""
+        async with uow:
+            repuesto = await uow.repuestos.get_by_id(id)
+            if repuesto is None:
+                raise _no_encontrado()
+            await uow.repuestos.soft_delete(repuesto)
 
     @staticmethod
     async def listar_movimientos(
-        repuesto_id: int,
+        id: int,
+        page: int,
+        size: int,
         uow: RepuestosUnitOfWork,
-    ) -> list[MovimientoStockResponse]:
+    ) -> PaginatedResponse[MovimientoStockResponse]:
+        """Historial de movimientos del repuesto, del más reciente al más antiguo."""
         async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
+            repuesto = await uow.repuestos.get_by_id(id)
             if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
-            movimientos = await uow.movimientos.listar_por_repuesto(repuesto_id)
-            return [armar_movimiento_response(mov) for mov in movimientos]
+                raise _no_encontrado()
+            total = await uow.movimientos.contar_por_repuesto(id)
+            filas = await uow.movimientos.listar_por_repuesto(
+                id,
+                offset=(page - 1) * size,
+                limit=size,
+            )
+
+        items = [
+            MovimientoStockResponse(
+                id=movimiento.id,
+                cantidad=movimiento.cantidad,
+                motivo=movimiento.motivo,
+                cuando=movimiento.cuando,
+                usuario_id=movimiento.usuario_id,
+                orden_id=movimiento.orden_id,
+            )
+            for movimiento in filas
+        ]
+        return armar_paginacion(items, total, page, size)
 
     @staticmethod
     async def listar_precios(
-        repuesto_id: int,
+        id: int,
+        page: int,
+        size: int,
         uow: RepuestosUnitOfWork,
-    ) -> list[HistorialPrecioResponse]:
+    ) -> PaginatedResponse[HistorialPrecioResponse]:
+        """Historial de cambios de precio, del más reciente al más antiguo."""
         async with uow:
-            repuesto = await uow.repuestos.get_by_id(repuesto_id)
+            repuesto = await uow.repuestos.get_by_id(id)
             if repuesto is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Repuesto no encontrado",
-                )
-            historial = await uow.precios.listar_por_repuesto(repuesto_id)
-            return [armar_historial_response(linea) for linea in historial]
+                raise _no_encontrado()
+            total = await uow.precios.contar_por_repuesto(id)
+            filas = await uow.precios.listar_por_repuesto(
+                id,
+                offset=(page - 1) * size,
+                limit=size,
+            )
+
+        items = [
+            HistorialPrecioResponse(
+                id=registro.id,
+                precio_anterior=registro.precio_anterior,
+                precio_nuevo=registro.precio_nuevo,
+                cuando=registro.cuando,
+                usuario_id=registro.usuario_id,
+            )
+            for registro in filas
+        ]
+        return armar_paginacion(items, total, page, size)

@@ -56,8 +56,16 @@ class OrdenTrabajo(SQLModel, table=True):
     vehiculo: "Vehiculo" = Relationship(back_populates="ordenes")
     mecanico: Optional["Usuario"] = Relationship(back_populates="ordenes_como_mecanico")
     estado_rel: EstadoOrden = Relationship(back_populates="ordenes")
-    items: list["ItemOrden"] = Relationship(back_populates="orden")
-    historial_estados: list["HistorialEstadoOrden"] = Relationship(back_populates="orden")
+    items: list["ItemOrden"] = Relationship(
+        back_populates="orden",
+        sa_relationship_kwargs={"order_by": "ItemOrden.id"},
+    )
+    historial_estados: list["HistorialEstadoOrden"] = Relationship(
+        back_populates="orden",
+        sa_relationship_kwargs={
+            "order_by": "HistorialEstadoOrden.cuando, HistorialEstadoOrden.id"
+        },
+    )
     movimientos_stock: list["MovimientoStock"] = Relationship(back_populates="orden")
 
 

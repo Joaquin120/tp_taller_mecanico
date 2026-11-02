@@ -1,4 +1,11 @@
-from fastapi import APIRouter, Depends, Query, status
+"""Router del catálogo de repuestos.
+
+RBAC (matriz de la KB):
+- lectura (`GET /repuestos`, `GET /repuestos/{id}`): ADMIN, RECEPCION, MECANICO.
+- mutaciones e historiales: sólo ADMIN.
+"""
+
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import UsuarioActual, requiere_rol
@@ -8,24 +15,25 @@ from app.modules.repuestos.schemas import (
     HistorialPrecioResponse,
     MovimientoStockResponse,
     ReponerStockRequest,
-    RepuestoActualizarRequest,
-    RepuestoCrearRequest,
+    RepuestoCreate,
     RepuestoResponse,
+    RepuestoUpdate,
 )
-from app.modules.repuestos.service import RepuestoService
+from app.modules.repuestos.service import CatalogoService
 from app.modules.repuestos.unit_of_work import RepuestosUnitOfWork
 
-router_protegido = APIRouter(prefix="/repuestos", tags=["repuestos"])
+ROLES_LECTURA = ("ADMIN", "RECEPCION", "MECANICO")
+
+router = APIRouter(prefix="/repuestos", tags=["repuestos"])
 
 
 async def get_repuestos_uow(
     session: AsyncSession = Depends(get_session),
 ) -> RepuestosUnitOfWork:
-    """El router construye el Unit of Work con la sesión de la dependencia."""
     return RepuestosUnitOfWork(session)
 
 
-@router_protegido.get(
+@router.get(
     "",
     response_model=PaginatedResponse[RepuestoResponse],
     status_code=status.HTTP_200_OK,
@@ -33,107 +41,118 @@ async def get_repuestos_uow(
 )
 async def listar_repuestos(
     params: ParamsPaginacion = Depends(),
-    q: str | None = Query(default=None, max_length=255),
-    actor: UsuarioActual = Depends(requiere_rol("ADMIN", "RECEPCION", "MECANICO")),
+    q: str | None = Query(default=None, max_length=255, description="Búsqueda por descripción"),
+    actor: UsuarioActual = Depends(requiere_rol(*ROLES_LECTURA)),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
 ) -> PaginatedResponse[RepuestoResponse]:
-    return await RepuestoService.listar(q, params.page, params.size, uow)
+    """Devuelve repuestos vigentes con búsqueda parcial por descripción."""
+    return await CatalogoService.listar(q, params.page, params.size, uow)
 
 
-@router_protegido.get(
-    "/{repuesto_id}",
-    response_model=RepuestoResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Detalle de un repuesto",
-)
-async def obtener_repuesto(
-    repuesto_id: int,
-    actor: UsuarioActual = Depends(requiere_rol("ADMIN", "RECEPCION", "MECANICO")),
-    uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
-) -> RepuestoResponse:
-    return await RepuestoService.obtener(repuesto_id, uow)
-
-
-@router_protegido.post(
+@router.post(
     "",
     response_model=RepuestoResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Alta de repuesto con stock inicial",
 )
 async def crear_repuesto(
-    payload: RepuestoCrearRequest,
+    payload: RepuestoCreate,
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
 ) -> RepuestoResponse:
-    return await RepuestoService.crear(payload, actor, uow)
+    """Crea el repuesto y su movimiento de alta cuando el stock inicial es positivo."""
+    return await CatalogoService.crear(payload, actor, uow)
 
 
-@router_protegido.patch(
-    "/{repuesto_id}",
+@router.get(
+    "/{id}",
     response_model=RepuestoResponse,
     status_code=status.HTTP_200_OK,
-    summary="Modificación de descripción y precio",
+    summary="Detalle de un repuesto vigente",
+)
+async def obtener_repuesto(
+    id: int,
+    actor: UsuarioActual = Depends(requiere_rol(*ROLES_LECTURA)),
+    uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
+) -> RepuestoResponse:
+    """Devuelve el repuesto vigente o 404."""
+    return await CatalogoService.obtener(id, uow)
+
+
+@router.patch(
+    "/{id}",
+    response_model=RepuestoResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Actualización de descripción y precio",
 )
 async def actualizar_repuesto(
-    repuesto_id: int,
-    payload: RepuestoActualizarRequest,
+    id: int,
+    payload: RepuestoUpdate,
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
 ) -> RepuestoResponse:
-    return await RepuestoService.actualizar(repuesto_id, payload, actor, uow)
+    """Actualiza descripción y/o precio; el historial se registra si el precio cambia."""
+    return await CatalogoService.actualizar(id, payload, actor, uow)
 
 
-@router_protegido.delete(
-    "/{repuesto_id}",
+@router.delete(
+    "/{id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Baja lógica de un repuesto",
 )
 async def eliminar_repuesto(
-    repuesto_id: int,
+    id: int,
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
-) -> None:
-    await RepuestoService.eliminar(repuesto_id, uow)
+) -> Response:
+    """Aplica borrado lógico sin eliminar la fila."""
+    await CatalogoService.dar_de_baja(id, uow)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router_protegido.post(
-    "/{repuesto_id}/reponer",
+@router.post(
+    "/{id}/reponer",
     response_model=RepuestoResponse,
     status_code=status.HTTP_200_OK,
     summary="Reposición de stock",
 )
 async def reponer_stock(
-    repuesto_id: int,
+    id: int,
     payload: ReponerStockRequest,
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
 ) -> RepuestoResponse:
-    return await RepuestoService.reponer(repuesto_id, payload, actor, uow)
+    """Incrementa el stock y registra el movimiento de reposición."""
+    return await CatalogoService.reponer(id, payload, actor, uow)
 
 
-@router_protegido.get(
-    "/{repuesto_id}/movimientos",
-    response_model=list[MovimientoStockResponse],
+@router.get(
+    "/{id}/movimientos",
+    response_model=PaginatedResponse[MovimientoStockResponse],
     status_code=status.HTTP_200_OK,
-    summary="Movimientos de stock de un repuesto",
+    summary="Historial de movimientos de stock",
 )
 async def listar_movimientos(
-    repuesto_id: int,
+    id: int,
+    params: ParamsPaginacion = Depends(),
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
-) -> list[MovimientoStockResponse]:
-    return await RepuestoService.listar_movimientos(repuesto_id, uow)
+) -> PaginatedResponse[MovimientoStockResponse]:
+    """Historial de sólo lectura, del movimiento más reciente al más antiguo."""
+    return await CatalogoService.listar_movimientos(id, params.page, params.size, uow)
 
 
-@router_protegido.get(
-    "/{repuesto_id}/precios",
-    response_model=list[HistorialPrecioResponse],
+@router.get(
+    "/{id}/precios",
+    response_model=PaginatedResponse[HistorialPrecioResponse],
     status_code=status.HTTP_200_OK,
-    summary="Historial de precios de un repuesto",
+    summary="Historial de precios",
 )
 async def listar_precios(
-    repuesto_id: int,
+    id: int,
+    params: ParamsPaginacion = Depends(),
     actor: UsuarioActual = Depends(requiere_rol("ADMIN")),
     uow: RepuestosUnitOfWork = Depends(get_repuestos_uow),
-) -> list[HistorialPrecioResponse]:
-    return await RepuestoService.listar_precios(repuesto_id, uow)
+) -> PaginatedResponse[HistorialPrecioResponse]:
+    """Historial de sólo lectura, del cambio más reciente al más antiguo."""
+    return await CatalogoService.listar_precios(id, params.page, params.size, uow)

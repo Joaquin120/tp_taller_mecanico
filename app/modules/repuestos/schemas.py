@@ -1,35 +1,63 @@
+"""Contratos Pydantic del módulo de repuestos.
+
+Reglas duras:
+- `extra="forbid"` heredado de `BaseSchema`: `stock` no puede viajar en el PATCH (RN-14).
+- El precio se valida como `Decimal` con 2 decimales y mayor a cero.
+- Los textos se normalizan con `strip` y rechazan cadenas vacías.
+"""
+
 from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, StringConstraints, model_validator
 
 from app.core.schemas import BaseSchema
 
+CodigoRepuesto = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+]
+DescripcionRepuesto = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+PrecioPositivo = Annotated[
+    Decimal,
+    Field(gt=0, max_digits=10, decimal_places=2),
+]
 
-class RepuestoCrearRequest(BaseSchema):
-    """Payload de alta de repuesto con stock inicial (RN-14)."""
 
-    codigo: str = Field(min_length=1, max_length=50)
-    descripcion: str = Field(min_length=1, max_length=255)
-    precio: Decimal = Field(gt=0)
+class RepuestoCreate(BaseSchema):
+    """Alta de repuesto con stock inicial opcional."""
+
+    codigo: CodigoRepuesto
+    descripcion: DescripcionRepuesto
+    precio: PrecioPositivo
     stock_inicial: int = Field(default=0, ge=0)
 
 
-class RepuestoActualizarRequest(BaseSchema):
-    """PATCH parcial: sólo descripción y precio; el stock no se edita (RN-14)."""
+class RepuestoUpdate(BaseSchema):
+    """Modificación de descripción y/o precio; el stock queda explícitamente afuera."""
 
-    descripcion: str | None = Field(default=None, min_length=1, max_length=255)
-    precio: Decimal | None = Field(default=None, gt=0)
+    descripcion: DescripcionRepuesto | None = None
+    precio: PrecioPositivo | None = None
+
+    @model_validator(mode="after")
+    def _exigir_al_menos_un_campo(self) -> "RepuestoUpdate":
+        if self.descripcion is None and self.precio is None:
+            raise ValueError("Debe enviar al menos descripcion o precio")
+        return self
 
 
 class ReponerStockRequest(BaseSchema):
-    """Payload de reposición de stock."""
+    """Reposición de stock con cantidad estrictamente positiva."""
 
     cantidad: int = Field(gt=0)
 
 
 class RepuestoResponse(BaseSchema):
-    """Respuesta de un repuesto."""
+    """Representación pública de un repuesto vigente."""
 
     id: int
     codigo: str
@@ -39,23 +67,21 @@ class RepuestoResponse(BaseSchema):
 
 
 class MovimientoStockResponse(BaseSchema):
-    """Respuesta de un movimiento de stock (sólo agregado)."""
+    """Fila del historial de movimientos de stock."""
 
     id: int
-    repuesto_id: int
-    orden_id: int | None = None
-    usuario_id: int
     cantidad: int
     motivo: str
     cuando: datetime
+    usuario_id: int
+    orden_id: int | None = None
 
 
 class HistorialPrecioResponse(BaseSchema):
-    """Respuesta de una línea del historial de precios (sólo agregado)."""
+    """Fila del historial de cambios de precio."""
 
     id: int
-    repuesto_id: int
-    usuario_id: int
     precio_anterior: Decimal
     precio_nuevo: Decimal
     cuando: datetime
+    usuario_id: int
