@@ -12,8 +12,11 @@ Transparencia obligatoria (no afirmar falsamente "end-to-end"):
   1. devolver `datetime` con zona horaria (SQLite devuelve `naive`), y
   2. un único `commit` por Unit of Work (`contador_commits` permite assertearlo).
 - QUÉ NO CUBRE (requiere PostgreSQL, ver C-09):
-  * el índice único PARCIAL `uq_asignacion_rol_activa` (`WHERE revocada_en IS NULL`);
-    SQLite lo crea completo y más estricto que producción, por eso se elimina aquí;
+  * los índices únicos PARCIALES `uq_asignacion_rol_activa`
+    (`WHERE revocada_en IS NULL`), `uq_vehiculo_patente_activa`
+    (`WHERE borrado_en IS NULL`) y `uq_repuesto_codigo_activo`
+    (`WHERE borrado_en IS NULL`); SQLite los crea completos y más estrictos que
+    producción, por eso se eliminan aquí;
   * los triggers PL/pgSQL de sólo agregado (`test/solo_agregado.sql`);
   * asyncpg como controlador, `alembic upgrade head`, `seed.py` y la suite `.http`.
 - Nada de esto se instala ni configura: se usa exclusivamente el driver `sqlite3`
@@ -103,6 +106,10 @@ class SesionFalsa:
             # (`WHERE borrado_en IS NULL`). SQLite lo crea completo y bloquearía
             # reutilizar el código de un repuesto dado de baja.
             conn.execute(text("DROP INDEX IF EXISTS uq_repuesto_codigo_activo"))
+            # `uq_vehiculo_patente_activa` es parcial en PostgreSQL
+            # (`WHERE borrado_en IS NULL`). SQLite lo crea completo y bloquearía
+            # dar de alta un vehículo con la patente de uno dado de baja.
+            conn.execute(text("DROP INDEX IF EXISTS uq_vehiculo_patente_activa"))
         self._sync = Session(self.engine, expire_on_commit=False, autoflush=False)
         self.contador_commits = 0
 
