@@ -204,7 +204,8 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ---
 
 ### [C-07] `repuestos-stock-precios-module`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
+  - **Nota**: las tareas de verificación que requieren PostgreSQL real (`test/solo_agregado.sql`, `alembic upgrade head`/`current` y concurrencia del índice parcial) se difieren a **C-09** `verification-suite-e2e-docs`. El checklist de C-07 cerró 18/18.
 - **Scope**: Catálogo de repuestos, reposición de stock, auditoría atómica de precios e historial de sólo agregado
   - Repositorio de repuestos (SoftDelete): `GET /repuestos` con búsqueda por `q`, paginación segura y parámetros ligados; `GET /repuestos/{id}`
   - `POST /repuestos`: alta con `stock_inicial` generando el movimiento inicial

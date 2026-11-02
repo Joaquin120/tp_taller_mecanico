@@ -99,6 +99,10 @@ class SesionFalsa:
         # y rechazaría la reasignación de un rol vencido que en producción es válida.
         with self.engine.begin() as conn:
             conn.execute(text("DROP INDEX IF EXISTS uq_asignacion_rol_activa"))
+            # `uq_repuesto_codigo_activo` también es parcial en PostgreSQL
+            # (`WHERE borrado_en IS NULL`). SQLite lo crea completo y bloquearía
+            # reutilizar el código de un repuesto dado de baja.
+            conn.execute(text("DROP INDEX IF EXISTS uq_repuesto_codigo_activo"))
         self._sync = Session(self.engine, expire_on_commit=False, autoflush=False)
         self.contador_commits = 0
 

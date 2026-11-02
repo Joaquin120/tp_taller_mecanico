@@ -76,6 +76,45 @@ async def test_handler_asignacion_rol_usuario_id_fkey_404(mock_request):
 
 
 @pytest.mark.asyncio
+async def test_handler_uq_repuesto_codigo_activo_409(mock_request):
+    exc = crear_integrity_error(constraint_name="uq_repuesto_codigo_activo")
+    response = await manejar_integrity_error(mock_request, exc)
+
+    assert response.status_code == 409
+    body = response.body.decode("utf-8")
+    assert "código de repuesto ya se encuentra registrado" in body
+    assert "uq_repuesto_codigo_activo" not in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("constraint", "esperado"),
+    [
+        ("ck_repuesto_precio_positivo", "El precio debe ser mayor a cero"),
+        ("ck_repuesto_stock_no_negativo", "El stock no puede ser negativo"),
+        (
+            "ck_movimiento_stock_cantidad_no_cero",
+            "La cantidad del movimiento no puede ser cero",
+        ),
+        ("ck_historial_precio_nuevo_positivo", "El precio nuevo debe ser mayor a cero"),
+        (
+            "ck_historial_precio_cambio_requerido",
+            "El precio nuevo debe ser distinto del anterior",
+        ),
+    ],
+)
+async def test_handler_check_de_repuestos_422(mock_request, constraint, esperado):
+    exc = crear_integrity_error(constraint_name=constraint)
+    response = await manejar_integrity_error(mock_request, exc)
+
+    assert response.status_code == 422
+    body = response.body.decode("utf-8")
+    assert esperado in body
+    assert constraint not in body
+    assert "INSERT INTO" not in body
+
+
+@pytest.mark.asyncio
 async def test_handler_fallback_sqlstate_23505_409(mock_request):
     exc = crear_integrity_error(constraint_name="constraint_desconocido", sqlstate="23505")
     response = await manejar_integrity_error(mock_request, exc)
