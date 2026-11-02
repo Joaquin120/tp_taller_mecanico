@@ -108,10 +108,12 @@ class AuthService:
         ip: str,
         app_state_or_dummy_hash: Any,
         session_factory: async_sessionmaker[AsyncSession],
+        uow: UsuariosUnitOfWork,
     ) -> tuple[Usuario, str, list[str]]:
         """Inicia sesión con rate-limit (RN-08) y timing defense (RN-09).
 
-        DD-04: El intento de acceso se audita en una sesión independiente.
+        La lectura de usuario y roles se realiza a través del Unit of Work.
+        DD-04: Sólo el intento de acceso se audita en una sesión independiente.
         Retorna (usuario, token, roles).
         """
         # 1. Resolver dummy_hash
@@ -139,11 +141,9 @@ class AuthService:
                     headers={"Retry-After": "60"},
                 )
 
-        # 3. Búsqueda de usuario y verificación timing-safe (RN-09)
-        async with session_factory() as session_auth:
-            repo_usr = UsuarioRepository(session_auth)
-            repo_roles = AsignacionRolRepository(session_auth)
-            usuario = await repo_usr.get_by_email(email)
+        # 3. Búsqueda de usuario y verificación timing-safe (RN-09) vía UoW
+        async with uow:
+            usuario = await uow.usuarios.get_by_email(email)
 
             if usuario is not None and usuario.activo:
                 target_hash = usuario.password_hash
@@ -154,7 +154,7 @@ class AuthService:
             exito = bool(pwd_valida and usuario is not None and usuario.activo)
 
             if exito:
-                roles = await repo_roles.get_roles_vigentes(usuario.id)
+                roles = await uow.roles.get_roles_vigentes(usuario.id)
             else:
                 roles = []
 

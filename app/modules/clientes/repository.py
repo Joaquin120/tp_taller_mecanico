@@ -25,11 +25,11 @@ class ClienteRepository(BaseRepository[Cliente]):
         return result.scalar_one_or_none()
 
     async def get_by_id_con_vehiculos(self, cliente_id: int) -> Cliente | None:
-        """Obtiene el cliente precargando sus vehículos."""
+        """Obtiene el cliente precargando sus vehículos vigentes (RN-16)."""
         stmt = (
             select(Cliente)
             .where(Cliente.id == cliente_id)
-            .options(selectinload(Cliente.vehiculos))
+            .options(selectinload(Cliente.vehiculos.and_(Vehiculo.borrado_en.is_(None))))
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()

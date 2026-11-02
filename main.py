@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.auth import requiere_password_actualizada
 from app.core.config import get_settings
 from app.core.database import crear_fabrica_sesiones, crear_motor
+from app.modules.clientes.router import router_protegido as clientes_router_protegido
 from app.modules.health.router import router as health_router
 from app.modules.ordenes.router import router_protegido as ordenes_router_protegido
 from app.modules.repuestos.router import router_protegido as repuestos_router_protegido
@@ -38,6 +39,26 @@ _CONSTRAINT_MAP: dict[str, tuple[int, str]] = {
     "asignacion_rol_otorgada_por_fkey": (
         status.HTTP_400_BAD_REQUEST,
         "El administrador otorgante no es válido",
+    ),
+    "cliente_documento_key": (
+        status.HTTP_409_CONFLICT,
+        "Ya existe un cliente registrado con ese documento",
+    ),
+    "ix_cliente_documento": (
+        status.HTTP_409_CONFLICT,
+        "Ya existe un cliente registrado con ese documento",
+    ),
+    "uq_vehiculo_patente_activa": (
+        status.HTTP_409_CONFLICT,
+        "Ya existe un vehículo vigente registrado con esa patente",
+    ),
+    "ck_vehiculo_anio_valido": (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "Año de vehículo inválido",
+    ),
+    "vehiculo_cliente_id_fkey": (
+        status.HTTP_404_NOT_FOUND,
+        "Cliente no encontrado",
     ),
 }
 
@@ -102,6 +123,10 @@ app.include_router(health_router)
 app.include_router(auth_router, prefix="/auth")
 app.include_router(
     router_protegido,
+    dependencies=[Depends(requiere_password_actualizada)],
+)
+app.include_router(
+    clientes_router_protegido,
     dependencies=[Depends(requiere_password_actualizada)],
 )
 app.include_router(

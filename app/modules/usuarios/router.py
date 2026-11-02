@@ -67,6 +67,7 @@ async def login(
     payload: LoginRequest,
     request: Request,
     response: Response,
+    uow: UsuariosUnitOfWork = Depends(get_usuarios_uow),
 ) -> LoginResponse:
     """Inicia sesión, verifica rate-limit (RN-08) y emite token en cookie HttpOnly (DD-02).
 
@@ -91,6 +92,7 @@ async def login(
         ip=client_ip,
         app_state_or_dummy_hash=request.app.state,
         session_factory=session_factory,
+        uow=uow,
     )
 
     # Establecer cookie segura HttpOnly
