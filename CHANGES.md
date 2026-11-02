@@ -187,7 +187,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ## FASE 2 — Módulos de Clientes y Repuestos (Paralelizables)
 
 ### [C-06] `clientes-vehiculos-module`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Gestión de clientes, flota de vehículos y borrado lógico con validación de órdenes abiertas
   - Repositorio y UoW de clientes: `POST /clientes` (documento único), `GET /clientes/{id}` con precarga de vehículos
   - Repositorio de vehículos (SoftDelete): `POST /clientes/{id}/vehiculos` (patente única vigente, año 1950..2100)

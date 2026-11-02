@@ -23,6 +23,9 @@ def setup_test_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("BCRYPT_ROUNDS", "4")
     app.state.dummy_hash = "$2b$04$dummyhashfordefensetimingtestingonly1234567890123456789012"
     app.state.session_factory = MagicMock()
+    app.dependency_overrides[get_usuarios_uow] = lambda: AsyncMock()
+    yield
+    app.dependency_overrides.pop(get_usuarios_uow, None)
 
 
 @pytest.mark.asyncio
@@ -155,6 +158,46 @@ async def test_login_exitoso_set_cookie_sin_token_en_body():
     assert "access_token=" in cookie_header
     assert "HttpOnly" in cookie_header
     assert "SameSite=lax" in cookie_header or "samesite=lax" in cookie_header
+
+
+@pytest.mark.asyncio
+async def test_login_router_inyecta_uow_en_servicio():
+    mock_usuario = Usuario(
+        id=6,
+        email="login_uow@test.com",
+        nombre="Usuario UoW",
+        password_hash="hash",
+        activo=True,
+    )
+    fake_token = crear_access_token({"sub": "login_uow@test.com", "roles": ["CLIENTE"]})
+    uow_sentinel = AsyncMock()
+    capturado: dict[str, object] = {}
+
+    async def override_uow():
+        return uow_sentinel
+
+    async def mock_login(**kwargs):
+        capturado["uow"] = kwargs.get("uow")
+        return mock_usuario, fake_token, ["CLIENTE"]
+
+    app.dependency_overrides[get_usuarios_uow] = override_uow
+
+    from unittest.mock import patch
+    with patch.object(AuthService, "login", side_effect=mock_login):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/auth/login",
+                json={
+                    "email": "login_uow@test.com",
+                    "password": "MiPasswordCorrecto",
+                },
+            )
+
+    assert response.status_code == 200
+    assert capturado["uow"] is uow_sentinel
 
 
 @pytest.mark.asyncio

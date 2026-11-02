@@ -186,7 +186,7 @@ async def test_login_exitoso():
     # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
     session_audit.add = MagicMock()
 
-    sessions = [session_rl, session_auth, session_audit]
+    sessions = [session_rl, session_audit]
 
     class FakeSessionFactory:
         def __call__(self):
@@ -202,6 +202,7 @@ async def test_login_exitoso():
         ip="127.0.0.1",
         app_state_or_dummy_hash="dummy_hash_str",
         session_factory=FakeSessionFactory(),
+        uow=UsuariosUnitOfWork(session_auth),
     )
 
     assert user_res.id == 1
@@ -238,7 +239,7 @@ async def test_login_credenciales_incorrectas_lanza_401():
     session_audit = AsyncMock()
     # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
     session_audit.add = MagicMock()
-    sessions = [session_rl, session_auth, session_audit]
+    sessions = [session_rl, session_audit]
 
     class FakeSessionFactory:
         def __call__(self):
@@ -255,6 +256,7 @@ async def test_login_credenciales_incorrectas_lanza_401():
             ip="127.0.0.1",
             app_state_or_dummy_hash="dummy_hash_str",
             session_factory=FakeSessionFactory(),
+            uow=UsuariosUnitOfWork(session_auth),
         )
 
     assert exc_info.value.status_code == 401
@@ -281,7 +283,7 @@ async def test_login_usuario_inexistente_usa_dummy_hash_y_lanza_401():
     session_audit = AsyncMock()
     # `AsyncSession.add` es síncrono en SQLAlchemy: su doble debe ser MagicMock
     session_audit.add = MagicMock()
-    sessions = [session_rl, session_auth, session_audit]
+    sessions = [session_rl, session_audit]
 
     class FakeSessionFactory:
         def __call__(self):
@@ -298,6 +300,7 @@ async def test_login_usuario_inexistente_usa_dummy_hash_y_lanza_401():
             ip="10.0.0.1",
             app_state_or_dummy_hash=dummy_hash,
             session_factory=FakeSessionFactory(),
+            uow=UsuariosUnitOfWork(session_auth),
         )
 
     assert exc_info.value.status_code == 401
@@ -328,6 +331,7 @@ async def test_login_rate_limit_5_fallos_lanza_429():
             ip="127.0.0.1",
             app_state_or_dummy_hash="dummy",
             session_factory=FakeSessionFactory(),
+            uow=AsyncMock(),
         )
 
     assert exc_info.value.status_code == 429
