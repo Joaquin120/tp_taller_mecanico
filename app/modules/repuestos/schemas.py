@@ -50,6 +50,9 @@ class RepuestoUpdate(BaseSchema):
         return self
 
 
+RepuestoActualizarRequest = RepuestoUpdate
+
+
 class ReponerStockRequest(BaseSchema):
     """Reposición de stock con cantidad estrictamente positiva."""
 

@@ -1,0 +1,423 @@
+### ==============================================================================
+### SUITE HTTP: AUTENTICACIÓN, SESIONES Y CONTROL DE ACCESO (C-01 a C-09)
+### ==============================================================================
+
+@baseUrl = http://localhost:8000
+
+### ------------------------------------------------------------------------------
+### LOGINS POR ROL (Nombrados para sesiones concurrentes)
+### ------------------------------------------------------------------------------
+
+# @name loginAdmin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginRecepcion
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginMecanico
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginCliente
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginNuevo
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "nuevo@example.com",
+  "password": "Password123!"
+}
+
+### ==============================================================================
+### CASO C-01: Parámetro de ruta no entero con sesión iniciada
+### Esperado: HTTP 422 Unprocessable Entity sin ejecutar el handler de negocio
+### ==============================================================================
+
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/abc
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-02: Registro de cliente atómico y unicidad sin filas huérfanas
+### ==============================================================================
+
+# 1. Registro válido
+# Esperado: HTTP 201 Created con roles: ["CLIENTE"] y cliente_id generado
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "carlos_test@example.com",
+  "password": "Password123!",
+  "nombre": "Carlos Gómez",
+  "documento": "40111222",
+  "telefono": "1155443322"
+}
+
+###
+
+# 2. Intento con correo repetido
+# Esperado: HTTP 409 Conflict ("El correo ya se encuentra registrado")
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "carlos_test@example.com",
+  "password": "Password123!",
+  "nombre": "Otro Nombre",
+  "documento": "40999888",
+  "telefono": "1155443322"
+}
+
+###
+
+# 3. Intento con documento repetido pero correo nuevo
+# Esperado: HTTP 409 Conflict ("Ya existe un cliente registrado con ese documento").
+# Garantiza que el rollback del UoW no deja usuario ni rol huérfanos.
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "carlos_nuevo_correo@example.com",
+  "password": "Password123!",
+  "nombre": "Carlos Duplicado",
+  "documento": "40111222",
+  "telefono": "1155443322"
+}
+
+### ==============================================================================
+### CASO C-03: Cookie de sesión HttpOnly y rechazo sin cookie o con Bearer
+### ==============================================================================
+
+# 1. Login exitoso emite Set-Cookie segura sin token en el cuerpo
+# Esperado: HTTP 200 OK
+# Set-Cookie: access_token=...; HttpOnly; SameSite=lax; Max-Age=1800
+# Body: {"mensaje": "Inicio de sesión exitoso", "email": "admin@example.com", "roles": ["ADMIN"]}
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# 2. Petición protegida sin cookie
+# Esperado: HTTP 401 Unauthorized ("No autenticado")
+GET {{baseUrl}}/auth/yo
+
+###
+
+# 3. Petición protegida con cabecera Authorization: Bearer (prohibido por DD-02)
+# Esperado: HTTP 401 Unauthorized ("No autenticado")
+GET {{baseUrl}}/auth/yo
+Authorization: Bearer un_token_ficticio_jwt_en_cabecera
+
+### ==============================================================================
+### CASO C-04: Login timing-safe (correo existente vs inexistente con clave errónea)
+### Esperado: Ambos responden HTTP 401 Unauthorized idénticos ("Credenciales inválidas")
+### y en tiempo de respuesta similar gracias al hash ficticio de bcrypt (RN-09).
+### ==============================================================================
+
+# 1. Correo existente con contraseña incorrecta
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "PasswordIncorrecta123!"
+}
+
+###
+
+# 2. Correo inexistente con contraseña incorrecta
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "usuario_fantasma_inexistente@example.com",
+  "password": "PasswordIncorrecta123!"
+}
+
+### ==============================================================================
+### CASO C-05: Seis intentos fallidos seguidos (Rate Limit y auditoría)
+### Esperado: Los primeros 5 responden 401 auditados en intento_acceso.
+### El sexto responde HTTP 429 Too Many Requests con Retry-After en milisegundos.
+### ==============================================================================
+
+# Intento 1
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea1!"
+}
+
+###
+# Intento 2
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea2!"
+}
+
+###
+# Intento 3
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea3!"
+}
+
+###
+# Intento 4
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea4!"
+}
+
+###
+# Intento 5
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea5!"
+}
+
+###
+# Intento 6 (Bloqueado)
+# Esperado: HTTP 429 Too Many Requests con cabecera Retry-After: 60
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "fuerzabruta@example.com",
+  "password": "ClaveErronea6!"
+}
+
+### ==============================================================================
+### CASO C-06: 401 contra 403, y acceso a recursos propios vs ajenos
+### ==============================================================================
+
+# 1. Cliente intenta acceder a recurso restringido a personal
+# Esperado: HTTP 403 Forbidden ("No posee los roles requeridos")
+# @no-cookie-jar
+GET {{baseUrl}}/clientes/1
+Cookie: {{loginCliente.response.headers.Set-Cookie}}
+
+###
+
+# 2. Cliente consulta su propia orden (Laura dueña de Orden 1)
+# Esperado: HTTP 200 OK con detalle de orden 1
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/1
+Cookie: {{loginCliente.response.headers.Set-Cookie}}
+
+###
+
+# 3. Cliente intenta consultar orden de otro cliente (Orden 2 es de Jorge)
+# Esperado: HTTP 403 Forbidden ("No tiene permiso para consultar esta orden")
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/2
+Cookie: {{loginCliente.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-07: Revocación de rol en caliente con sesión abierta
+### ==============================================================================
+
+# 1. Login fresco de recepción
+# @name loginRecepcionC07
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# 2. Recepción verifica su identidad antes de la revocación
+# Esperado: HTTP 200 OK, roles: ["RECEPCION"]
+# @no-cookie-jar
+GET {{baseUrl}}/auth/yo
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+###
+
+# 3. Administrador revoca el rol RECEPCION a recepcion (usuario_id = 3)
+# Esperado: HTTP 200 OK {"mensaje": "Rol revocado correctamente", "rol": "RECEPCION"}
+# @no-cookie-jar
+DELETE {{baseUrl}}/usuarios/3/roles/RECEPCION
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 4. Recepción intenta realizar operación con su cookie previa
+# Esperado: HTTP 403 Forbidden ("No posee los roles requeridos") evaluando la BD en caliente
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+###
+
+# 5. Recepción consulta /auth/yo mostrando la pérdida del rol
+# Esperado: HTTP 200 OK, roles: [] (vigentes en BD) vs roles_token: ["RECEPCION"]
+# @no-cookie-jar
+GET {{baseUrl}}/auth/yo
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+###
+
+# 6. Admin intenta asignar rol con vencimiento en el pasado
+# Esperado: HTTP 422 Unprocessable Entity ("vence_en debe ser una fecha futura")
+# @no-cookie-jar
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "rol": "RECEPCION",
+  "vence_en": "2020-01-01T00:00:00Z"
+}
+
+###
+
+# 7. Admin intenta asignar rol sin zona horaria
+# Esperado: HTTP 422 Unprocessable Entity ("vence_en debe incluir zona horaria")
+# @no-cookie-jar
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "rol": "RECEPCION",
+  "vence_en": "2030-01-01T12:00:00"
+}
+
+###
+
+# 8. Admin restituye el rol a recepción para no afectar otras pruebas
+# Esperado: HTTP 201 Created
+# @no-cookie-jar
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "rol": "RECEPCION"
+}
+
+### ==============================================================================
+### CASO C-08: Autoprotección del administrador
+### Esperado: HTTP 409 Conflict ("No puede revocar su propio rol de administrador")
+### ==============================================================================
+
+# @no-cookie-jar
+DELETE {{baseUrl}}/usuarios/1/roles/ADMIN
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-09: Cambio obligatorio de contraseña
+### ==============================================================================
+
+# 1. Login como nuevo usuario con debe_cambiar_password = True
+# @name loginNuevoC09
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "nuevo@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# 2. Intento de acceso al grupo protegido sin haber cambiado contraseña
+# Esperado: HTTP 403 Forbidden ("Debe cambiar su contraseña antes de continuar")
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+###
+
+# 3. El grupo /auth no está bloqueado
+# Esperado: HTTP 200 OK con debe_cambiar_password: true
+# @no-cookie-jar
+GET {{baseUrl}}/auth/yo
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+###
+
+# 4. Cambio exitoso de contraseña
+# Esperado: HTTP 200 OK y emisión de nueva Set-Cookie
+# @name cambioPasswordNuevo
+# @no-cookie-jar
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+{
+  "password_actual": "Password123!",
+  "password_nueva": "NewSecurePassword456!"
+}
+
+###
+
+# 5. Petición al grupo protegido con la NUEVA cookie
+# Esperado: HTTP 200 OK
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes
+Cookie: {{cambioPasswordNuevo.response.headers.Set-Cookie}}
+
+###
+
+# 6. Petición al grupo protegido con la cookie ANTERIOR
+# Esperado: HTTP 401 Unauthorized ("La sesión ha expirado por cambio de contraseña") sin esperar expiración
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}

@@ -63,6 +63,8 @@ GATE 6: C-06 + C-07 ✓
 
 GATE 7: C-08 ✓
   → C-09 verification-suite-e2e-docs (solo)
+
+GATE 8: C-09 ✓                                           ← PROYECTO COMPLETADO (100%)
 ```
 
 ### Camino crítico (7 changes — mínimo irreducible)
@@ -186,20 +188,20 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 
 ## FASE 2 — Módulos de Clientes y Repuestos (Paralelizables)
 
-### [C-06] clientes-vehiculos-module
-- *Estado*: [x] completado (archivado)
-- *Scope*: Gestión de clientes, flota de vehículos y borrado lógico con validación de órdenes abiertas
-  - Repositorio y UoW de clientes: POST /clientes (documento único), GET /clientes/{id} con precarga de vehículos
-  - Repositorio de vehículos (SoftDelete): POST /clientes/{id}/vehiculos (patente única vigente, año 1950..2100)
-  - DELETE /vehiculos/{id}: borrado lógico (borrado_en = NOW()); si el vehículo tiene órdenes con estado es_final=False, rechaza con 409 (RN-16); si no, responde 204
-  - GET /mis-vehiculos: cliente autenticado consulta únicamente sus vehículos vigentes (RN-17)
+### [C-06] `clientes-vehiculos-module`
+- **Estado**: `[x]` completado (archivado)
+- **Scope**: Gestión de clientes, flota de vehículos y borrado lógico con validación de órdenes abiertas
+  - Repositorio y UoW de clientes: `POST /clientes` (documento único), `GET /clientes/{id}` con precarga de vehículos
+  - Repositorio de vehículos (SoftDelete): `POST /clientes/{id}/vehiculos` (patente única vigente, año 1950..2100)
+  - `DELETE /vehiculos/{id}`: borrado lógico (`borrado_en = NOW()`); si el vehículo tiene órdenes con estado `es_final=False`, rechaza con 409 (RN-16); si no, responde 204
+  - `GET /mis-vehiculos`: cliente autenticado consulta únicamente sus vehículos vigentes (RN-17)
   - Registro de vehículos vendidos con misma patente para otro cliente (C-19)
-- *Dependencias*: C-05
-- *Governance*: MEDIO
-- *Leer antes*:
-  - knowledge-base/04_modelo_de_datos.md §cliente y vehiculo
-  - knowledge-base/05_reglas_de_negocio.md (RN-01, RN-16, RN-17)
-  - knowledge-base/06_funcionalidades.md §Épica 3
+- **Dependencias**: C-05
+- **Governance**: MEDIO
+- **Leer antes**:
+  - `knowledge-base/04_modelo_de_datos.md` §cliente y vehiculo
+  - `knowledge-base/05_reglas_de_negocio.md` (RN-01, RN-16, RN-17)
+  - `knowledge-base/06_funcionalidades.md` §Épica 3
 
 ---
 
@@ -248,7 +250,7 @@ Paso │ Agente A (Core & Entidades)    │ Agente B (Stock & Auxiliar)       �
 ## FASE 4 — Verificación E2E y Entregables Finales
 
 ### [C-09] `verification-suite-e2e-docs`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado)
 - **Scope**: Suite completa de pruebas de cátedra (.http y SQL), verificación de consultas sin N+1, env.example y README de puesta en marcha
   - Directorio `test/` con archivos `.http`: `test/auth.http` (C-01 a C-09 con manejo de multi-sesión `# @no-cookie-jar`), `test/ordenes.http` (C-10 a C-13) y `test/repuestos_vehiculos.http` (C-16 a C-19)
   - `test/solo_agregado.sql`: script de prueba de los 6 rechazos del disparador de sólo agregado y la clave foránea del catálogo (C-14)

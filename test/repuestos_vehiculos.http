@@ -1,0 +1,227 @@
+### ==============================================================================
+### SUITE HTTP: REPUESTOS, CATÁLOGO Y VEHÍCULOS (C-16 a C-19)
+### ==============================================================================
+
+@baseUrl = http://localhost:8000
+
+### ------------------------------------------------------------------------------
+### LOGINS REQUERIDOS
+### ------------------------------------------------------------------------------
+
+# @name loginAdmin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginRecepcion
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginMecanico
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "Password123!"
+}
+
+### ==============================================================================
+### CASO C-16: Búsqueda segura anti SQL Injection, paginación estricta y PATCH parcial
+### ==============================================================================
+
+# 1. Búsqueda con payload SQL Injection
+# Esperado: HTTP 200 OK con items: [] y total: 0 (la consulta parametrizada no inyecta)
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=%27%20OR%20%271%27=%271
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 2. Paginación con filtro devolviendo total 1 y pages 1
+# Esperado: HTTP 200 OK con total: 1, page: 1, size: 1, pages: 1
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=freno&size=1
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 3. Paginación fuera de rango
+# Esperado: HTTP 422 Unprocessable Entity ("Página 2 fuera de rango")
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=freno&page=2&size=1
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 4. Tamaño de página inválido que excede el límite
+# Esperado: HTTP 422 Unprocessable Entity (size no puede superar 100)
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?size=500
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 5. PATCH parcial de repuesto: actualiza únicamente la descripción enviada
+# Esperado: HTTP 200 OK con la descripción actualizada y el precio intacto
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "descripcion": "Filtro de aceite de alto rendimiento"
+}
+
+###
+
+# 6. PATCH intentando modificar stock
+# Esperado: HTTP 422 Unprocessable Entity por extra="forbid" (RN-14)
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "stock": 50
+}
+
+### ==============================================================================
+### CASO C-17: Catálogo de estados de orden
+### ==============================================================================
+
+# 1. Consulta del catálogo de estados ordenado por posición
+# Esperado: HTTP 200 OK con los 4 estados:
+# 1: PENDIENTE (es_final: false)
+# 2: EN_REPARACION (es_final: false)
+# 3: TERMINADA (es_final: true)
+# 4: CANCELADA (es_final: true)
+# @no-cookie-jar
+GET {{baseUrl}}/estados-orden
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 2. Consulta sin sesión iniciada
+# Esperado: HTTP 401 Unauthorized ("No autenticado")
+GET {{baseUrl}}/estados-orden
+
+###
+
+# 3. Filtrar órdenes con un estado fuera de contrato
+# Esperado: HTTP 422 Unprocessable Entity
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes?estado=VOLANDO
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-18: Auditoría histórica de precios en repuestos
+### ==============================================================================
+
+# 1. Modificación de precio por administrador
+# Esperado: HTTP 200 OK con nuevo precio 9200.00
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "precio": "9200.00"
+}
+
+###
+
+# 2. Consulta de historial de precios: registra el cambio
+# Esperado: HTTP 200 OK con fila precio_anterior: 8500.00 y precio_nuevo: 9200.00
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/1/precios
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 3. Segundo PATCH modificando sólo descripción (sin cambio de precio)
+# Esperado: HTTP 200 OK
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "descripcion": "Filtro de aceite sintético blindado"
+}
+
+###
+
+# 4. Consulta de historial de precios: no se agregaron filas adicionales
+# Esperado: HTTP 200 OK con la misma cantidad de filas que en el paso 2
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/1/precios
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+###
+
+# 5. Recepción intenta modificar precio
+# Esperado: HTTP 403 Forbidden ("No posee los roles requeridos")
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+{
+  "precio": "10000.00"
+}
+
+### ==============================================================================
+### CASO C-19: Baja lógica de vehículo y reciclado de patente
+### ==============================================================================
+
+# 1. Recepción da de baja vehículo 2 de Laura (patente AC456DD, sin órdenes abiertas)
+# Esperado: HTTP 204 No Content
+# @no-cookie-jar
+DELETE {{baseUrl}}/vehiculos/2
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+###
+
+# 2. Registro de la misma patente "AC456DD" para Jorge (cliente_id = 2)
+# Esperado: HTTP 201 Created gracias al índice único parcial uq_vehiculo_patente_activa
+# @no-cookie-jar
+POST {{baseUrl}}/clientes/2/vehiculos
+Content-Type: application/json
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+{
+  "patente": "AC456DD",
+  "marca": "Ford",
+  "modelo": "Focus Trend",
+  "anio": 2018
+}
+
+###
+
+# 3. Intento de registrar una segunda patente idéntica vigente
+# Esperado: HTTP 409 Conflict ("Ya existe un vehículo vigente registrado con esa patente")
+# @no-cookie-jar
+POST {{baseUrl}}/clientes/1/vehiculos
+Content-Type: application/json
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+{
+  "patente": "AC456DD",
+  "marca": "Ford",
+  "modelo": "Focus Titanium",
+  "anio": 2020
+}

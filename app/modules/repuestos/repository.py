@@ -91,6 +91,23 @@ class MovimientoStockRepository(_SoloAgregadoRepository):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(MovimientoStock, session)
 
+    async def registrar_movimiento(
+        self,
+        repuesto_id: int,
+        usuario_id: int,
+        cantidad: int,
+        motivo: str,
+        orden_id: int | None = None,
+    ) -> MovimientoStock:
+        mov = MovimientoStock(
+            repuesto_id=repuesto_id,
+            usuario_id=usuario_id,
+            cantidad=cantidad,
+            motivo=motivo,
+            orden_id=orden_id,
+        )
+        return await self.add(mov)
+
     async def listar_por_repuesto(
         self,
         repuesto_id: int,

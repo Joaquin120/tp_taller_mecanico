@@ -413,14 +413,12 @@ class OrdenService:
 
             for item, repuesto in repuestos:
                 repuesto.stock -= item.cantidad
-                await uow.movimientos.add(
-                    MovimientoStock(
-                        repuesto_id=repuesto.id,
-                        orden_id=orden.id,
-                        usuario_id=actor.id,
-                        cantidad=-item.cantidad,
-                        motivo=f"Salida por orden {orden.id}",
-                    )
+                await uow.movimientos.registrar_movimiento(
+                    repuesto_id=repuesto.id,
+                    orden_id=orden.id,
+                    usuario_id=actor.id,
+                    cantidad=-item.cantidad,
+                    motivo=f"Salida por orden {orden.id}",
                 )
 
             orden.estado = ESTADO_TERMINADA

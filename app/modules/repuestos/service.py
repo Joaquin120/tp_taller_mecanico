@@ -164,14 +164,12 @@ class CatalogoService:
 
             repuesto.stock += dto.cantidad
             repuesto = await uow.repuestos.update(repuesto)
-            await uow.movimientos.add(
-                MovimientoStock(
-                    repuesto_id=repuesto.id,
-                    usuario_id=actor.id,
-                    cantidad=dto.cantidad,
-                    motivo=MOTIVO_REPOSICION,
-                    orden_id=None,
-                )
+            await uow.movimientos.registrar_movimiento(
+                repuesto_id=repuesto.id,
+                usuario_id=actor.id,
+                cantidad=dto.cantidad,
+                motivo=MOTIVO_REPOSICION,
+                orden_id=None,
             )
 
         return _a_response(repuesto)
@@ -247,3 +245,6 @@ class CatalogoService:
             for registro in filas
         ]
         return armar_paginacion(items, total, page, size)
+
+
+RepuestoService = CatalogoService

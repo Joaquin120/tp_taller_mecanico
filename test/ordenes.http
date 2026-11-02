@@ -1,0 +1,188 @@
+### ==============================================================================
+### SUITE HTTP: ÓRDENES DE TRABAJO Y TRANSACCIONALIDAD DE STOCK (C-10 a C-13)
+### ==============================================================================
+
+@baseUrl = http://localhost:8000
+
+### ------------------------------------------------------------------------------
+### LOGINS REQUERIDOS
+### ------------------------------------------------------------------------------
+
+# @name loginRecepcion
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginMecanico
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginAdmin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginCliente
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "Password123!"
+}
+
+### ==============================================================================
+### CASO C-10: Alta de orden con 2 ítems y cálculo en servidor
+### ==============================================================================
+
+# 1. Creación válida con repuesto 1 (Filtro $8500) y repuesto 2 (Pastillas $15000)
+# Esperado: HTTP 201 Created
+# Precios unitarios congelados desde el servidor, total calculado ($32000.00),
+# estado "PENDIENTE" y primer registro en historial de estados.
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+{
+  "vehiculo_id": 1,
+  "falla": "Ruido en tren delantero y revisión general de frenos",
+  "items": [
+    {
+      "repuesto_id": 1,
+      "cantidad": 2
+    },
+    {
+      "repuesto_id": 2,
+      "cantidad": 1
+    }
+  ]
+}
+
+###
+
+# 2. Intento de alta con repuesto inexistente
+# Esperado: HTTP 409 Conflict ("Repuesto con ID 99999 no existe o está inactivo").
+# El rollback atómico garantiza que no queda ninguna orden de trabajo huérfana creada.
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+Cookie: {{loginRecepcion.response.headers.Set-Cookie}}
+
+{
+  "vehiculo_id": 1,
+  "falla": "Intento con repuesto inválido",
+  "items": [
+    {
+      "repuesto_id": 99999,
+      "cantidad": 1
+    }
+  ]
+}
+
+### ==============================================================================
+### CASO C-11: Terminación rechazada por falta de stock (Rollback Total)
+### Orden 2 en seed requiere 4 bujías (repuesto 3), pero el stock disponible es 2.
+### ==============================================================================
+
+# 1. Mecánico asignado intenta terminar la orden 2
+# Esperado: HTTP 409 Conflict ("Stock insuficiente para el repuesto: Bujía")
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/terminar
+Cookie: {{loginMecanico.response.headers.Set-Cookie}}
+
+###
+
+# 2. Verificación de rollback total: la orden continúa en EN_REPARACION
+# Esperado: HTTP 200 OK con estado "EN_REPARACION"
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/2
+Cookie: {{loginMecanico.response.headers.Set-Cookie}}
+
+###
+
+# 3. Verificación de rollback total: el stock de bujías permanece intacto en 2
+# Esperado: HTTP 200 OK con stock: 2
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/3
+Cookie: {{loginMecanico.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-12: Reposición de stock y terminación exitosa
+### ==============================================================================
+
+# 1. Administrador repone 10 unidades del repuesto 3 (Bujía)
+# Esperado: HTTP 200 OK con stock: 12
+# @no-cookie-jar
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+{
+  "cantidad": 10
+}
+
+###
+
+# 2. Mecánico asignado termina exitosamente la orden 2
+# Esperado: HTTP 200 OK
+# Estado pasa a "TERMINADA", stock descuenta 4 bujías quedando en 8,
+# se genera movimiento_stock de salida, nueva línea en historial_estado_orden
+# y se ejecuta el aviso simulado en BackgroundTasks tras el commit.
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/terminar
+Cookie: {{loginMecanico.response.headers.Set-Cookie}}
+
+###
+
+# 3. Verificación del stock final descontado (12 - 4 = 8)
+# Esperado: HTTP 200 OK con stock: 8
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/3
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}
+
+### ==============================================================================
+### CASO C-13: Cancelación evaluando permisos antes de estado
+### ==============================================================================
+
+# 1. Dueña Laura cancela su propia orden 1 en estado PENDIENTE
+# Esperado: HTTP 200 OK con estado "CANCELADA"
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/1/cancelar
+Cookie: {{loginCliente.response.headers.Set-Cookie}}
+
+###
+
+# 2. Cliente Laura intenta cancelar la orden 2 de Jorge
+# Esperado: HTTP 403 Forbidden ("No tiene permiso para cancelar esta orden").
+# La verificación de pertenencia precede a cualquier validación de estado.
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/cancelar
+Cookie: {{loginCliente.response.headers.Set-Cookie}}
+
+###
+
+# 3. Actor autorizado (Admin) intenta cancelar la orden 2 ya TERMINADA
+# Esperado: HTTP 409 Conflict ("No se puede cancelar una orden en estado TERMINADA")
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/cancelar
+Cookie: {{loginAdmin.response.headers.Set-Cookie}}

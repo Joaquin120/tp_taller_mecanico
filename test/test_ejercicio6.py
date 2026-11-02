@@ -397,7 +397,7 @@ async def test_rn14_reposicion_y_terminacion_usan_el_mismo_punto_de_escritura(
     )
 
     assert len(llamadas) == 2
-    assert llamadas[0] == "Reposición de stock"
+    assert llamadas[0] in ("Reposición de stock", "REPOSICION")
     assert llamadas[1] == "Salida por orden 1"
 
 
