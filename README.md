@@ -19,7 +19,7 @@ Implementa arquitectura limpia en 6 capas, patrón **Unit of Work** con reposito
 
 ### 1. Clonar el repositorio
 ```bash
-git clone <url-del-repositorio>
+git clone https://github.com/Joaquin120/tp_taller_mecanico.git
 cd tp_taller_mecanico
 ```
 
