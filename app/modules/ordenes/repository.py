@@ -1,3 +1,14 @@
+"""Repositorios del módulo de órdenes de trabajo.
+
+Reglas duras:
+- Sólo se llama a `session.flush()`; nunca a `session.commit()` (lo hace el UoW).
+- El detalle usa carga anticipada fija (`selectinload`) para garantizar cero N+1.
+- `historial_estado_orden` es de sólo agregado: su repositorio expone `add` y
+  consultas, y bloquea `update`/`delete`.
+- `estado_orden` es un catálogo de sólo lectura: no hereda de `BaseRepository`
+  porque su PK no es `id` y no debe ofrecer escrituras.
+"""
+
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -15,11 +26,7 @@ from app.modules.ordenes.models import (
 
 
 class EstadoOrdenRepository:
-    """Repositorio de sólo lectura del catálogo de estados.
-
-    No hereda de BaseRepository a propósito: su clave primaria no es `id` y la
-    API no debe ofrecer add, update ni delete sobre el catálogo (RN-19).
-    """
+    """Repositorio de sólo lectura del catálogo de estados (RN-19)."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -40,6 +47,16 @@ class EstadoOrdenRepository:
         return result.scalar_one()
 
 
+def _opciones_detalle() -> tuple:
+    """Opciones de carga anticipada fijas: constantes respecto del nº de ítems."""
+    return (
+        selectinload(OrdenTrabajo.vehiculo).selectinload(Vehiculo.cliente),
+        selectinload(OrdenTrabajo.items).selectinload(ItemOrden.repuesto),
+        selectinload(OrdenTrabajo.historial_estados),
+        selectinload(OrdenTrabajo.mecanico),
+    )
+
+
 class OrdenTrabajoRepository(BaseRepository[OrdenTrabajo]):
     """Repositorio para la entidad OrdenTrabajo."""
 
@@ -49,16 +66,29 @@ class OrdenTrabajoRepository(BaseRepository[OrdenTrabajo]):
     async def get_detalle(self, orden_id: int) -> OrdenTrabajo | None:
         """Obtiene la orden con vehículo, cliente, ítems, repuestos e historial.
 
-        La precarga se declara acá, dentro del método que la necesita (sin N+1).
+        La precarga se declara acá, dentro del método que la necesita, y usa
+        `selectinload`: una consulta por relación sin importar la cantidad de
+        ítems (cero N+1).
         """
         stmt = (
             select(OrdenTrabajo)
             .where(OrdenTrabajo.id == orden_id)
-            .options(
-                selectinload(OrdenTrabajo.vehiculo).selectinload(Vehiculo.cliente),
-                selectinload(OrdenTrabajo.items).selectinload(ItemOrden.repuesto),
-                selectinload(OrdenTrabajo.historial_estados),
-            )
+            .options(*_opciones_detalle())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_para_actualizar(self, orden_id: int) -> OrdenTrabajo | None:
+        """Obtiene el detalle bloqueando la fila de la orden para mutaciones.
+
+        El bloqueo evita que dos terminaciones concurrentes descuenten stock dos
+        veces; las relaciones se precargan antes de mutar el estado.
+        """
+        stmt = (
+            select(OrdenTrabajo)
+            .where(OrdenTrabajo.id == orden_id)
+            .options(*_opciones_detalle())
+            .with_for_update()
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -148,17 +178,37 @@ class ItemOrdenRepository(BaseRepository[ItemOrden]):
         return result.scalars().all()
 
 
-class HistorialEstadoOrdenRepository(BaseRepository[HistorialEstadoOrden]):
-    """Repositorio del historial de estados (sólo agregado)."""
+class _SoloAgregadoRepository(BaseRepository):
+    """Base de repositorios inmutables: permite insertar y consultar, nada más."""
+
+    async def update(self, entity):  # type: ignore[override]
+        raise NotImplementedError(
+            f"{self.model.__name__} es de sólo agregado: no admite update"
+        )
+
+    async def delete(self, entity):  # type: ignore[override]
+        raise NotImplementedError(
+            f"{self.model.__name__} es de sólo agregado: no admite delete"
+        )
+
+
+class HistorialEstadoOrdenRepository(_SoloAgregadoRepository):
+    """Historial de estados de la orden: sólo inserciones y consultas."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session, HistorialEstadoOrden)
+        super().__init__(HistorialEstadoOrden, session)
 
-    async def listar_por_orden(self, orden_id: int) -> Sequence[HistorialEstadoOrden]:
+    async def listar_por_orden(
+        self,
+        orden_id: int,
+    ) -> Sequence[HistorialEstadoOrden]:
         stmt = (
             select(HistorialEstadoOrden)
             .where(HistorialEstadoOrden.orden_id == orden_id)
-            .order_by(HistorialEstadoOrden.cuando, HistorialEstadoOrden.id)
+            .order_by(
+                HistorialEstadoOrden.cuando,
+                HistorialEstadoOrden.id,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()

@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.database import crear_fabrica_sesiones, crear_motor
 from app.modules.clientes.router import router_protegido as clientes_router_protegido
 from app.modules.health.router import router as health_router
+from app.modules.ordenes.router import router_protegido as ordenes_router_protegido
 from app.modules.repuestos.router import router as repuestos_router
 from app.modules.usuarios.router import router as auth_router
 from app.modules.usuarios.router import router_protegido
@@ -83,6 +84,42 @@ _CONSTRAINT_MAP: dict[str, tuple[int, str]] = {
         status.HTTP_404_NOT_FOUND,
         "Cliente no encontrado",
     ),
+    "uq_item_orden_orden_repuesto": (
+        status.HTTP_409_CONFLICT,
+        "El repuesto ya forma parte de la orden",
+    ),
+    "ck_item_orden_cantidad_positiva": (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "La cantidad del ítem debe ser mayor a cero",
+    ),
+    "ck_item_orden_precio_positivo": (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "El precio unitario debe ser mayor a cero",
+    ),
+    "ck_orden_trabajo_total_no_negativo": (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "El total de la orden no puede ser negativo",
+    ),
+    "orden_trabajo_vehiculo_id_fkey": (
+        status.HTTP_404_NOT_FOUND,
+        "Vehículo no encontrado",
+    ),
+    "orden_trabajo_mecanico_id_fkey": (
+        status.HTTP_400_BAD_REQUEST,
+        "Mecánico no válido",
+    ),
+    "item_orden_orden_id_fkey": (
+        status.HTTP_404_NOT_FOUND,
+        "Orden de trabajo no encontrada",
+    ),
+    "item_orden_repuesto_id_fkey": (
+        status.HTTP_400_BAD_REQUEST,
+        "Repuesto no válido",
+    ),
+    "movimiento_stock_orden_id_fkey": (
+        status.HTTP_404_NOT_FOUND,
+        "Orden de trabajo no encontrada",
+    ),
 }
 
 _SQLSTATE_MAP: dict[str, tuple[int, str]] = {
@@ -150,6 +187,10 @@ app.include_router(
 )
 app.include_router(
     clientes_router_protegido,
+    dependencies=[Depends(requiere_password_actualizada)],
+)
+app.include_router(
+    ordenes_router_protegido,
     dependencies=[Depends(requiere_password_actualizada)],
 )
 app.include_router(

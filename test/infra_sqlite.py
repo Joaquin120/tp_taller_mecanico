@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from types import TracebackType
 from typing import Any, Self
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 from sqlmodel import SQLModel
 
@@ -55,6 +55,17 @@ def _normalizar_entidad(entidad: Any) -> Any:
                 entidad.__dict__[nombre_columna] = actual.replace(tzinfo=timezone.utc)
         return entidad
     return _normalizar_datetime(entidad)
+
+
+@event.listens_for(Session, "loaded_as_persistent")
+def _normalizar_al_cargar(_session: Session, instancia: Any) -> None:
+    """Emula asyncpg también en cargas perezosas y refrescos implícitos.
+
+    Sin este hook, una relación cargada después de un `rollback` (que expira los
+    objetos) devolvía `datetime` naive y cualquier comparación con un valor
+    recién creado (aware) fallaba con TypeError.
+    """
+    _normalizar_entidad(instancia)
 
 
 class _Escalares:
